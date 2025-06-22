@@ -12,6 +12,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote_plus
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent.parent.parent
@@ -20,9 +21,15 @@ sys.path.insert(0, str(project_root))
 try:
     from dashboard.utils.database_manager import get_database_manager
     from dashboard.components.workflow_state_manager import WorkflowStateManager
+    from dashboard.components.smart_search import SmartSearch
+    from dashboard.utils.keyword_extractor import KeywordExtractor
+    from dashboard.utils.image_similarity import ImageSimilarityAnalyzer
 except ImportError:
     get_database_manager = None
     WorkflowStateManager = None
+    SmartSearch = None
+    KeywordExtractor = None
+    ImageSimilarityAnalyzer = None
 
 def load_filtered_products_from_db():
     """데이터베이스에서 필터링된 제품 데이터 로드"""
@@ -262,17 +269,159 @@ def validate_coupang_url(url):
     
     return False, "올바른 쿠팡 파트너스 링크 형식이 아닙니다. (예: https://coupa.ng/... 또는 https://link.coupang.com/...)"
 
-def render_manual_link_form(product_id, current_link=""):
-    """수동 링크 연결 폼"""
+def render_smart_search_interface(product_name, product_id):
+    """스마트 검색 인터페이스 렌더링"""
+    if SmartSearch is None:
+        st.error("스마트 검색 모듈을 로드할 수 없습니다.")
+        return None
+    
+    st.markdown("#### 🔍 스마트 제품 검색")
+    
+    # 탭으로 구분
+    tab1, tab2, tab3 = st.tabs(["🤖 자동 검색", "✋ 수동 검색", "📊 검색 결과"])
+    
+    with tab1:
+        st.markdown("**AI 기반 다중 플랫폼 검색**")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # 키워드 추출 미리보기
+            if KeywordExtractor:
+                extractor = KeywordExtractor()
+                keyword_result = extractor.extract_all_keywords(product_name, max_keywords=8)
+                extracted_keywords = keyword_result.get('keywords', [])
+                
+                if extracted_keywords:
+                    st.markdown("**추출된 키워드:**")
+                    keyword_chips = " ".join([f"`{kw}`" for kw in extracted_keywords[:6]])
+                    st.markdown(keyword_chips)
+        
+        with col2:
+            search_button = st.button("🔍 자동 검색 시작", type="primary", use_container_width=True)
+        
+        if search_button:
+            smart_search = SmartSearch()
+            
+            # 이미지 URL (실제로는 제품 이미지에서 가져와야 함)
+            product_image_url = "https://via.placeholder.com/300x300?text=Product"
+            
+            # 검색 실행
+            search_result = smart_search.search_multi_platform(product_name, product_image_url)
+            
+            if search_result['success']:
+                results = search_result['results']
+                keywords_used = search_result['keywords_used']
+                
+                st.success(f"✅ {len(results)}개의 대안 상품을 찾았습니다!")
+                
+                # 검색 정보 표시
+                st.markdown("**사용된 키워드:**")
+                st.markdown(" · ".join(keywords_used[:5]))
+                
+                # 검색 결과를 세션에 저장
+                st.session_state[f'search_results_{product_id}'] = results
+                
+            else:
+                st.error(f"검색 실패: {search_result['message']}")
+    
+    with tab2:
+        st.markdown("**사용자 정의 키워드 검색**")
+        
+        with st.form(f"manual_search_form_{product_id}"):
+            custom_keyword = st.text_input(
+                "검색 키워드",
+                placeholder="예: 크림, 스킨케어, 화장품..."
+            )
+            
+            search_platforms = st.multiselect(
+                "검색 플랫폼",
+                ["네이버 쇼핑", "11번가", "아마존"],
+                default=["네이버 쇼핑", "11번가"]
+            )
+            
+            manual_search_button = st.form_submit_button("🔍 수동 검색", type="primary")
+            
+            if manual_search_button and custom_keyword:
+                smart_search = SmartSearch()
+                manual_results = smart_search.manual_search(custom_keyword)
+                
+                if manual_results:
+                    st.success(f"✅ {len(manual_results)}개의 결과를 찾았습니다!")
+                    st.session_state[f'search_results_{product_id}'] = manual_results
+                else:
+                    st.warning("검색 결과가 없습니다.")
+    
+    with tab3:
+        # 저장된 검색 결과 표시
+        if f'search_results_{product_id}' in st.session_state:
+            results = st.session_state[f'search_results_{product_id}']
+            
+            st.markdown(f"**검색 결과 ({len(results)}개)**")
+            
+            for i, result in enumerate(results[:8]):  # 최대 8개 표시
+                with st.expander(f"🛍️ {result['title'][:50]}... (점수: {result.get('recommendation_score', 0):.2f})"):
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown(f"**플랫폼:** {result['platform']}")
+                        st.markdown(f"**가격:** {result['price']}")
+                        st.markdown(f"**평점:** {result.get('rating', 0)} ⭐ ({result.get('review_count', 0)} 리뷰)")
+                        
+                        if result.get('image_similarity'):
+                            st.markdown(f"**이미지 유사도:** {result['image_similarity']:.1%}")
+                        
+                        if result.get('keyword_used'):
+                            st.markdown(f"**검색 키워드:** `{result['keyword_used']}`")
+                    
+                    with col2:
+                        if st.button(f"🔗 선택", key=f"select_{product_id}_{i}"):
+                            # 선택된 결과를 수동 링크로 설정
+                            st.session_state[f'selected_link_{product_id}'] = result['url']
+                            st.success("링크가 선택되었습니다!")
+                        
+                        if st.button(f"🔍 상세보기", key=f"detail_{product_id}_{i}"):
+                            st.info("새 창에서 상품 페이지를 확인하세요.")
+                            st.markdown(f"[상품 페이지 열기]({result['url']})")
+            
+            # 검색 통계
+            if SmartSearch:
+                smart_search = SmartSearch()
+                smart_search.search_history = [{'total_results': len(results)}]  # 임시 데이터
+                stats = smart_search.get_search_statistics()
+                
+                if stats['total_searches'] > 0:
+                    st.markdown("---")
+                    st.markdown("**검색 통계**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("총 결과", stats.get('total_results_found', len(results)))
+                    with col2:
+                        st.metric("평균 점수", f"{sum(r.get('recommendation_score', 0) for r in results) / len(results):.2f}")
+                    with col3:
+                        high_similarity = len([r for r in results if r.get('image_similarity', 0) > 0.7])
+                        st.metric("고유사도", f"{high_similarity}개")
+        
+        else:
+            st.info("검색을 실행하면 결과가 여기에 표시됩니다.")
+    
+    # 선택된 링크 반환
+    return st.session_state.get(f'selected_link_{product_id}', '')
+
+def render_manual_link_form(product_id, current_link="", product_name=""):
+    """수동 링크 연결 폼 (스마트 검색 통합)"""
     with st.form(f"link_form_{product_id}"):
         st.markdown("#### 🔗 수동 링크 연결")
+        
+        # 스마트 검색에서 선택된 링크가 있으면 자동 입력
+        selected_link = st.session_state.get(f'selected_link_{product_id}', current_link)
         
         col1, col2 = st.columns([3, 1])
         
         with col1:
             manual_link = st.text_input(
                 "쿠팡 파트너스 링크",
-                value=current_link,
+                value=selected_link,
                 placeholder="https://coupa.ng/... 또는 https://link.coupang.com/..."
             )
             
@@ -289,14 +438,18 @@ def render_manual_link_form(product_id, current_link=""):
         with col2:
             st.markdown("**🔍 보조 검색**")
             
+            google_search_url = f"https://www.google.com/search?q={quote_plus(product_name + ' 쿠팡')}"
+            naver_search_url = f"https://search.shopping.naver.com/search/all?query={quote_plus(product_name)}"
+            coupang_search_url = f"https://www.coupang.com/np/search?q={quote_plus(product_name)}"
+            
             if st.form_submit_button("Google 검색", use_container_width=True):
-                st.info("Google 검색 기능은 향후 구현됩니다.")
+                st.markdown(f"[Google에서 검색하기]({google_search_url})")
             
             if st.form_submit_button("네이버 검색", use_container_width=True):
-                st.info("네이버 검색 기능은 향후 구현됩니다.")
+                st.markdown(f"[네이버 쇼핑에서 검색하기]({naver_search_url})")
             
             if st.form_submit_button("쿠팡 직접 검색", use_container_width=True):
-                st.info("쿠팡 검색 기능은 향후 구현됩니다.")
+                st.markdown(f"[쿠팡에서 검색하기]({coupang_search_url})")
         
         col1, col2, col3 = st.columns(3)
         
@@ -507,14 +660,35 @@ def render_filtered_products():
             # 수동 처리 인터페이스 (검색실패나 수동연결대기 상태일 때만)
             if row['상태'] in ['검색실패', '수동연결대기', '재검토중']:
                 st.markdown("---")
-                action, link, keywords, memo = render_manual_link_form(
-                    row['id'], 
-                    row['수동_링크']
-                )
                 
-                # 액션 처리 (실제로는 데이터베이스 업데이트)
-                if action:
-                    st.success(f"처리 완료: {action}")
+                # 스마트 검색 인터페이스 추가
+                if SmartSearch:
+                    smart_search_tab, manual_link_tab = st.tabs(["🔍 스마트 검색", "🔗 수동 연결"])
+                    
+                    with smart_search_tab:
+                        selected_smart_link = render_smart_search_interface(row['제품명'], row['id'])
+                    
+                    with manual_link_tab:
+                        action, link, keywords, memo = render_manual_link_form(
+                            row['id'], 
+                            row['수동_링크'],
+                            row['제품명']
+                        )
+                        
+                        # 액션 처리 (실제로는 데이터베이스 업데이트)
+                        if action:
+                            st.success(f"처리 완료: {action}")
+                else:
+                    # 스마트 검색이 불가능한 경우 기본 폼만 표시
+                    action, link, keywords, memo = render_manual_link_form(
+                        row['id'], 
+                        row['수동_링크'],
+                        row['제품명']
+                    )
+                    
+                    # 액션 처리 (실제로는 데이터베이스 업데이트)
+                    if action:
+                        st.success(f"처리 완료: {action}")
             
             # 추가 액션 버튼들
             st.markdown("---")
