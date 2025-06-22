@@ -27,20 +27,26 @@ from config import Config
 class ObjectDetector:
     """YOLO11 기반 객체 탐지 프로세서 클래스"""
     
-    def __init__(self, config: Optional[Config] = None, model_name: str = "yolo11n.pt"):
+    def __init__(self, config: Optional[Config] = None, model_name: str = "yolo11n.pt", gpu_optimizer=None):
         """
         객체 탐지 프로세서 초기화
         
         Args:
             config: 설정 객체
             model_name: 사용할 YOLO 모델명 (기본값: yolo11n.pt)
+            gpu_optimizer: GPU 최적화 객체 (선택적)
         """
         self.config = config or Config()
         self.model_name = model_name
+        self.gpu_optimizer = gpu_optimizer
         self.logger = self._setup_logger()
         self.model = None
         self.confidence_threshold = getattr(self.config, 'YOLO_CONFIDENCE_THRESHOLD', 0.25)
         self.iou_threshold = getattr(self.config, 'YOLO_IOU_THRESHOLD', 0.45)
+        
+        if self.gpu_optimizer:
+            self.logger.info("객체 탐지 GPU 최적화 활성화됨")
+        
         self._load_model()
     
     def _setup_logger(self) -> logging.Logger:
