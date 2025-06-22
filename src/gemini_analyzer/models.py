@@ -7,6 +7,7 @@ PRD JSON 스키마를 기반으로 한 Pydantic 데이터 모델들입니다.
 from pydantic import BaseModel, Field, validator
 from typing import List, Dict, Optional, Any
 from datetime import datetime
+import numpy as np
 
 
 class SourceInfo(BaseModel):
@@ -93,6 +94,12 @@ class MonetizationInfo(BaseModel):
     is_coupang_product: bool = Field(..., description="쿠팡 상품 여부")
     coupang_url_ai: Optional[str] = Field(None, description="AI가 찾은 쿠팡 URL")
     coupang_url_manual: Optional[str] = Field(None, description="수동으로 설정한 쿠팡 URL")
+    # 추가된 필드들
+    search_keywords_used: List[str] = Field(default_factory=list, description="사용된 검색 키워드들")
+    product_match_confidence: Optional[float] = Field(None, ge=0, le=1, description="제품 매칭 신뢰도")
+    commission_rate: Optional[float] = Field(None, ge=0, description="커미션율 (%)")
+    coupang_price: Optional[int] = Field(None, ge=0, description="쿠팡 판매가격")
+    verification_timestamp: Optional[str] = Field(None, description="수익화 검증 시각")
 
 
 class StatusInfo(BaseModel):
@@ -245,3 +252,111 @@ class ProductAnalysisResult(BaseModel):
                 }
             }
         }
+
+
+# =============================================================================
+# 타겟 프레임 분석 모델들 (T05_S02)
+# =============================================================================
+
+class TargetTimeframe(BaseModel):
+    """1차 분석에서 탐지된 타겟 시간대"""
+    start_time: float = Field(..., description="후보 구간 시작 시간(초)")
+    end_time: float = Field(..., description="후보 구간 종료 시간(초)")
+    reason: str = Field(..., description="후보로 선정된 이유")
+    confidence_score: float = Field(..., ge=0, le=1, description="신뢰도 점수")
+
+    @validator('end_time')
+    def validate_time_order(cls, v, values):
+        """종료 시간이 시작 시간보다 늦은지 검증"""
+        if 'start_time' in values and v <= values['start_time']:
+            raise ValueError('종료 시간이 시작 시간보다 늦어야 합니다')
+        return v
+
+
+class ExtractedFrame(BaseModel):
+    """추출된 프레임 정보"""
+    timestamp: float = Field(..., description="프레임 타임스탬프(초)")
+    frame_index: int = Field(..., description="프레임 인덱스")
+    frame_path: Optional[str] = Field(None, description="프레임 이미지 파일 경로")
+    frame_data: Optional[Any] = Field(None, description="프레임 이미지 데이터 (numpy array)")
+    quality_score: float = Field(..., ge=0, le=1, description="프레임 품질 점수")
+    width: int = Field(..., description="프레임 너비")
+    height: int = Field(..., description="프레임 높이")
+    is_keyframe: bool = Field(default=False, description="키프레임 여부")
+
+    class Config:
+        arbitrary_types_allowed = True  # numpy array 허용
+
+
+class FrameAnalysisResult(BaseModel):
+    """개별 프레임 분석 결과"""
+    frame: ExtractedFrame = Field(..., description="분석된 프레임 정보")
+    ocr_results: List[Dict[str, Any]] = Field(default_factory=list, description="OCR 텍스트 인식 결과")
+    object_detection_results: List[Dict[str, Any]] = Field(default_factory=list, description="객체 인식 결과")
+    detected_texts: List[str] = Field(default_factory=list, description="인식된 텍스트들")
+    detected_objects: List[str] = Field(default_factory=list, description="인식된 객체들")
+    analysis_timestamp: float = Field(..., description="분석 수행 시간")
+    processing_time_ms: float = Field(..., description="처리 소요 시간(밀리초)")
+
+
+class TargetFrameAnalysisResult(BaseModel):
+    """타겟 시간대 전체 분석 결과"""
+    target_timeframe: TargetTimeframe = Field(..., description="분석 대상 시간대")
+    video_file_path: str = Field(..., description="분석된 영상 파일 경로")
+    total_frames_extracted: int = Field(..., description="추출된 총 프레임 수")
+    successful_analyses: int = Field(..., description="성공적으로 분석된 프레임 수")
+    frame_results: List[FrameAnalysisResult] = Field(..., description="개별 프레임 분석 결과들")
+    summary_texts: List[str] = Field(default_factory=list, description="전체 구간에서 발견된 텍스트 요약")
+    summary_objects: List[str] = Field(default_factory=list, description="전체 구간에서 발견된 객체 요약")
+    processing_stats: Dict[str, Any] = Field(default_factory=dict, description="처리 통계 정보")
+    
+    # 메타데이터
+    analysis_start_time: float = Field(..., description="분석 시작 시간")
+    analysis_end_time: float = Field(..., description="분석 완료 시간")
+    total_processing_time: float = Field(..., description="총 처리 시간(초)")
+    
+    @validator('successful_analyses')
+    def validate_success_count(cls, v, values):
+        """성공 분석 수가 총 프레임 수를 초과하지 않는지 검증"""
+        if 'total_frames_extracted' in values and v > values['total_frames_extracted']:
+            raise ValueError('성공 분석 수가 총 프레임 수를 초과할 수 없습니다')
+        return v
+
+
+class VideoMetadata(BaseModel):
+    """영상 메타데이터"""
+    file_path: str = Field(..., description="영상 파일 경로")
+    duration_seconds: float = Field(..., description="영상 총 길이(초)")
+    fps: float = Field(..., description="초당 프레임 수")
+    total_frames: int = Field(..., description="총 프레임 수")
+    width: int = Field(..., description="영상 너비")
+    height: int = Field(..., description="영상 높이")
+    codec: Optional[str] = Field(None, description="코덱 정보")
+    bitrate: Optional[int] = Field(None, description="비트레이트")
+    
+    @validator('total_frames')
+    def validate_frame_count(cls, v, values):
+        """총 프레임 수가 duration과 fps에 맞는지 검증"""
+        if all(key in values for key in ['duration_seconds', 'fps']):
+            expected_frames = int(values['duration_seconds'] * values['fps'])
+            if abs(v - expected_frames) > values['fps']:  # 1초 오차 허용
+                raise ValueError(f'총 프레임 수 {v}가 예상값 {expected_frames}와 차이가 큽니다')
+        return v
+
+
+class FrameExtractionConfig(BaseModel):
+    """프레임 추출 설정"""
+    sampling_interval: float = Field(default=1.0, description="프레임 샘플링 간격(초)")
+    max_frames_per_timeframe: int = Field(default=30, description="시간대당 최대 프레임 수")
+    min_quality_threshold: float = Field(default=0.5, description="최소 품질 임계값")
+    prefer_keyframes: bool = Field(default=True, description="키프레임 우선 추출 여부")
+    quality_assessment_method: str = Field(default="laplacian", description="품질 평가 방법")
+    
+    @validator('sampling_interval')
+    def validate_sampling_interval(cls, v):
+        """샘플링 간격이 유효한지 검증"""
+        if v <= 0:
+            raise ValueError('샘플링 간격은 0보다 커야 합니다')
+        if v > 10:
+            raise ValueError('샘플링 간격이 너무 큽니다 (최대 10초)')
+        return v
