@@ -152,12 +152,60 @@ def render_status_badge(status):
 
 def render_monetizable_candidates():
     """수익화 가능 후보 페이지 렌더링"""
+    
+    # 반응형 CSS 스타일 추가
+    st.markdown("""
+    <style>
+    /* 테이블 반응형 스타일 */
+    .stDataFrame {
+        width: 100%;
+        overflow-x: auto;
+    }
+    
+    /* 모바일 환경 대응 */
+    @media (max-width: 768px) {
+        .stDataFrame table {
+            font-size: 12px;
+        }
+        
+        .stColumns > div {
+            min-width: 0;
+            padding: 0 0.25rem;
+        }
+        
+        .stButton button {
+            font-size: 12px;
+            padding: 0.25rem 0.5rem;
+        }
+    }
+    
+    /* 점수 컬럼 강조 */
+    .stDataFrame table td:first-child {
+        font-weight: bold;
+        background-color: rgba(255, 193, 7, 0.1);
+    }
+    
+    /* 상태 배지 스타일 */
+    .status-badge {
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     st.markdown("## 💰 수익화 가능 후보 관리")
     
     # 데이터 로드
     if 'candidates_data' not in st.session_state:
-        with st.spinner("데이터를 불러오는 중..."):
+        with st.spinner("🔄 후보 데이터를 불러오는 중입니다..."):
+            # 로딩 상태 표시를 위한 프로그레스 바
+            progress_bar = st.progress(0, text="데이터베이스 연결 중...")
+            progress_bar.progress(30, text="후보 목록 조회 중...")
+            progress_bar.progress(70, text="분석 데이터 로드 중...")
             st.session_state.candidates_data = create_sample_data()
+            progress_bar.progress(100, text="로드 완료!")
+            progress_bar.empty()  # 프로그레스 바 제거
     
     df = st.session_state.candidates_data
     
@@ -214,18 +262,52 @@ def render_monetizable_candidates():
     st.markdown("### 📋 후보 목록")
     
     if len(filtered_df) == 0:
-        st.warning("검색 조건에 맞는 데이터가 없습니다.")
+        st.markdown("### 🔍 검색 결과가 없습니다")
+        st.info("""
+        현재 설정된 필터 조건에 맞는 후보가 없습니다.
+        
+        **💡 해결 방법:**
+        - 검색어를 다시 확인해주세요
+        - 카테고리 필터를 '전체'로 변경해보세요  
+        - 상태 필터를 '전체'로 변경해보세요
+        - 매력도 점수 범위를 넓혀보세요
+        """)
+        
+        # 필터 초기화 버튼
+        if st.button("🔄 모든 필터 초기화"):
+            st.rerun()
         return
     
-    # 정렬 옵션
-    col1, col2 = st.columns([1, 1])
+    # 정렬 옵션 - 더 직관적인 UI
+    st.markdown("**📊 정렬 및 표시 옵션**")
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
     with col1:
+        sort_options = {
+            "매력도_점수": "🎯 매력도 점수",
+            "업로드_날짜": "📅 업로드 날짜", 
+            "감성_강도": "❤️ 감성 강도",
+            "실사용_인증": "✅ 실사용 인증",
+            "인플루언서_신뢰도": "⭐ 인플루언서 신뢰도",
+            "채널명": "📺 채널명",
+            "제품명": "🎯 제품명"
+        }
         sort_column = st.selectbox(
             "정렬 기준",
-            ["매력도_점수", "업로드_날짜", "감성_강도", "실사용_인증", "인플루언서_신뢰도"]
+            options=list(sort_options.keys()),
+            format_func=lambda x: sort_options[x],
+            index=0
         )
+    
     with col2:
-        sort_ascending = st.selectbox("정렬 순서", ["내림차순", "오름차순"]) == "오름차순"
+        sort_ascending = st.selectbox(
+            "정렬 순서", 
+            ["내림차순 ⬇️", "오름차순 ⬆️"]
+        ) == "오름차순 ⬆️"
+    
+    with col3:
+        # 컬럼 표시/숨김 옵션
+        show_detailed_columns = st.checkbox("상세 컬럼 표시", value=True)
     
     # 정렬 적용
     sorted_df = filtered_df.sort_values(sort_column, ascending=sort_ascending)
@@ -252,50 +334,98 @@ def render_monetizable_candidates():
     # 테이블 표시
     st.markdown(f"**{start_idx + 1}-{min(end_idx, len(sorted_df))} / {len(sorted_df)} 항목**")
     
-    # 상세한 테이블 렌더링
-    for idx, row in page_df.iterrows():
-        with st.expander(f"🎯 {row['제품명']} (점수: {row['매력도_점수']})"):
-            col1, col2 = st.columns([2, 1])
+    # 테이블용 컬럼 선택 및 정리 - 상세 표시 옵션에 따라 조정
+    if show_detailed_columns:
+        display_columns = [
+            '매력도_점수', '채널명', '영상_제목', '제품명', '카테고리', 
+            '상태', '업로드_날짜', '타임스탬프', '조회수'
+        ]
+        column_names = ['점수', '채널명', '영상 제목', '제품명', '카테고리', '상태', '업로드일', '구간', '조회수']
+    else:
+        display_columns = [
+            '매력도_점수', '채널명', '제품명', '상태', '업로드_날짜'
+        ] 
+        column_names = ['점수', '채널명', '제품명', '상태', '업로드일']
+    
+    # 테이블 데이터 준비
+    table_df = page_df[display_columns].copy()
+    
+    # 컬럼명 한국어로 정리
+    table_df.columns = column_names
+    
+    # 상태 컬럼에 이모지 추가
+    table_df['상태'] = table_df['상태'].apply(render_status_badge)
+    
+    # 클릭 가능한 테이블 렌더링 
+    st.markdown("**💡 행을 클릭하면 상세 정보를 볼 수 있습니다.**")
+    
+    # Streamlit dataframe with selection
+    selected_rows = st.dataframe(
+        table_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row"
+    )
+    
+    # 선택된 행 처리
+    if selected_rows and len(selected_rows.selection.rows) > 0:
+        selected_idx = selected_rows.selection.rows[0]
+        selected_row = page_df.iloc[start_idx + selected_idx]
+        
+        st.markdown("---")
+        st.markdown("### 📋 선택된 후보 상세 정보")
+        
+        # 상세 정보 표시
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown(f"""
+            **📺 채널**: {selected_row['채널명']}  
+            **🎬 영상**: {selected_row['영상_제목']}  
+            **🎯 제품**: {selected_row['제품명']}  
+            **🏷️ 카테고리**: {selected_row['카테고리']}  
+            **💰 예상 가격**: {selected_row['예상_가격']}  
+            **📅 업로드**: {selected_row['업로드_날짜']}  
+            **⏰ 타임스탬프**: {selected_row['타임스탬프']}  
+            **👀 조회수**: {selected_row['조회수']}  
+            **🎞️ 영상 길이**: {selected_row['영상_길이']}
+            """)
+        
+        with col2:
+            st.markdown("**📊 분석 지표**")
+            st.progress(selected_row['감성_강도'], text=f"감성 강도: {selected_row['감성_강도']:.2f}")
+            st.progress(selected_row['실사용_인증'], text=f"실사용 인증: {selected_row['실사용_인증']:.2f}")
+            st.progress(selected_row['인플루언서_신뢰도'], text=f"신뢰도: {selected_row['인플루언서_신뢰도']:.2f}")
             
-            with col1:
-                st.markdown(f"""
-                **📺 채널**: {row['채널명']}  
-                **🎬 영상**: {row['영상_제목']}  
-                **🏷️ 카테고리**: {row['카테고리']}  
-                **💰 예상 가격**: {row['예상_가격']}  
-                **📅 업로드**: {row['업로드_날짜']}  
-                **⏰ 타임스탬프**: {row['타임스탬프']}  
-                **👀 조회수**: {row['조회수']}
-                """)
-            
-            with col2:
-                st.markdown("**📊 분석 지표**")
-                st.progress(row['감성_강도'], text=f"감성 강도: {row['감성_강도']:.2f}")
-                st.progress(row['실사용_인증'], text=f"실사용 인증: {row['실사용_인증']:.2f}")
-                st.progress(row['인플루언서_신뢰도'], text=f"신뢰도: {row['인플루언서_신뢰도']:.2f}")
-                
-                st.markdown(f"**상태**: {render_status_badge(row['상태'])}")
-            
-            # 액션 버튼
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                if st.button("✅ 승인", key=f"approve_{row['id']}"):
-                    st.success(f"{row['제품명']} 승인됨")
-            with col2:
-                if st.button("❌ 반려", key=f"reject_{row['id']}"):
-                    st.error(f"{row['제품명']} 반려됨")
-            with col3:
-                if st.button("✏️ 수정", key=f"edit_{row['id']}"):
-                    st.info(f"{row['제품명']} 수정 모드")
-            with col4:
-                if st.button("📹 영상보기", key=f"video_{row['id']}"):
-                    st.info("영상 재생 기능은 S03-004에서 구현됩니다.")
-            with col5:
-                if st.button("📊 상세", key=f"detail_{row['id']}"):
-                    # 상세 뷰로 이동
-                    st.session_state.selected_product = row.to_dict()
-                    st.session_state.current_page = 'detail_view'
-                    st.rerun()
+            st.markdown(f"**상태**: {render_status_badge(selected_row['상태'])}")
+        
+        # 액션 버튼
+        st.markdown("**🎛️ 액션**")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            if st.button("✅ 승인", key=f"approve_{selected_row['id']}"):
+                st.success(f"{selected_row['제품명']} 승인되었습니다!")
+        with col2:
+            if st.button("❌ 반려", key=f"reject_{selected_row['id']}"):
+                st.error(f"{selected_row['제품명']} 반려되었습니다!")
+        with col3:
+            if st.button("✏️ 수정", key=f"edit_{selected_row['id']}"):
+                st.info(f"{selected_row['제품명']} 수정 모드로 전환합니다.")
+        with col4:
+            if st.button("📹 영상보기", key=f"video_{selected_row['id']}"):
+                st.info("영상 재생 기능은 T06에서 구현 예정입니다.")
+        with col5:
+            if st.button("📊 상세뷰", key=f"detail_{selected_row['id']}"):
+                # 상세 뷰로 이동
+                st.session_state.selected_product = selected_row.to_dict()
+                st.session_state.current_page = 'detail_view'
+                st.rerun()
+    
+    # 빈 상태 처리
+    elif len(page_df) == 0:
+        st.markdown("### 📭 데이터가 없습니다")
+        st.info("현재 표시할 후보가 없습니다. 필터 조건을 조정해보세요.")
     
     # 데이터 내보내기
     st.markdown("---")

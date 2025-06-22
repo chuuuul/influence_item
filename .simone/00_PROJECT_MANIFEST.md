@@ -67,6 +67,7 @@ last_updated: 2025-06-23 05:43
 **진행 상황**: 
 ✅ T01_S01_M02 - Dashboard Project Setup 완료 (2025-06-23)
 ✅ T02_S01_M02 - Main Navigation Structure 완료 (2025-06-23 05:42)
+✅ T03_S01_M02 - Candidate List Layout 완료 (2025-06-23 06:01)
 
 ### S02 Dashboard Enhancement & Production (📋 PLANNED)  
 **목표**: PRD SPEC-DASH-03,04 및 운영 준비 완성
