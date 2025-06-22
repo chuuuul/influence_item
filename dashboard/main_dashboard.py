@@ -42,9 +42,54 @@ def initialize_app():
             
             **Version**: v1.0.0  
             **Tech Stack**: Streamlit, Gemini AI, Whisper, YOLOv8
+            
+            **키보드 단축키**:
+            - Alt + H: 홈 페이지
+            - Alt + M: 수익화 가능 후보
+            - Alt + F: 수익화 필터링 목록
+            - Alt + A: AI 콘텐츠 생성
             """
         }
     )
+    
+    # 키보드 단축키 지원을 위한 JavaScript
+    keyboard_shortcuts = """
+    <script>
+    document.addEventListener('keydown', function(e) {
+        if (e.altKey) {
+            switch(e.key) {
+                case 'h':
+                case 'H':
+                    e.preventDefault();
+                    // 홈 페이지로 이동
+                    window.parent.postMessage({type: 'navigate', page: 'home'}, '*');
+                    break;
+                case 'm':
+                case 'M':
+                    e.preventDefault();
+                    // 수익화 후보 페이지로 이동
+                    window.parent.postMessage({type: 'navigate', page: 'monetizable_candidates'}, '*');
+                    break;
+                case 'f':
+                case 'F':
+                    e.preventDefault();
+                    // 필터링 목록 페이지로 이동
+                    window.parent.postMessage({type: 'navigate', page: 'filtered_products'}, '*');
+                    break;
+                case 'a':
+                case 'A':
+                    e.preventDefault();
+                    // AI 콘텐츠 생성 페이지로 이동
+                    window.parent.postMessage({type: 'navigate', page: 'ai_content_generator'}, '*');
+                    break;
+            }
+        }
+    });
+    </script>
+    """
+    
+    # JavaScript를 페이지에 삽입
+    st.components.v1.html(keyboard_shortcuts, height=0)
     
     # 커스텀 CSS 스타일
     st.markdown("""
@@ -149,6 +194,28 @@ def initialize_app():
         background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
     }
     
+    /* 활성 메뉴 버튼 스타일 */
+    .stButton > button[data-testid="baseButton-primary"] {
+        background: linear-gradient(135deg, #667eea, #764ba2) !important;
+        color: white !important;
+        border: 2px solid #667eea !important;
+        font-weight: 700 !important;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4) !important;
+    }
+    
+    .stButton > button[data-testid="baseButton-secondary"] {
+        background: transparent !important;
+        color: #495057 !important;
+        border: 1px solid #dee2e6 !important;
+        font-weight: 500 !important;
+    }
+    
+    .stButton > button[data-testid="baseButton-secondary"]:hover {
+        background: #f8f9fa !important;
+        border-color: #667eea !important;
+        color: #667eea !important;
+    }
+    
     /* 알림 박스 개선 */
     .stAlert {
         border-radius: 10px;
@@ -174,8 +241,78 @@ def initialize_app():
     .footer a:hover {
         text-decoration: underline;
     }
+    
+    /* 반응형 디자인 */
+    @media (max-width: 768px) {
+        .main-header h1 {
+            font-size: 1.8rem;
+        }
+        
+        .main-header p {
+            font-size: 0.9rem;
+        }
+        
+        .main .block-container {
+            padding-top: 1rem;
+        }
+        
+        .metric-card {
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .activity-card {
+            padding: 0.75rem;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .main-header {
+            padding: 1.5rem 1rem;
+        }
+        
+        .main-header h1 {
+            font-size: 1.5rem;
+        }
+        
+        .sidebar .sidebar-content {
+            padding: 0.5rem;
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
+
+def render_breadcrumb():
+    """브레드크럼 네비게이션 렌더링"""
+    current_page = st.session_state.get('current_page', 'home')
+    
+    # 페이지별 브레드크럼 정의
+    breadcrumb_map = {
+        'home': [('🏠', '홈')],
+        'monetizable_candidates': [('🏠', '홈'), ('💰', '수익화 가능 후보')],
+        'filtered_products': [('🏠', '홈'), ('🔍', '수익화 필터링 목록')],
+        'ai_content_generator': [('🏠', '홈'), ('🔧', '분석 도구'), ('🤖', 'AI 콘텐츠 생성')],
+        'detail_view': [('🏠', '홈'), ('💰', '수익화 가능 후보'), ('📋', '상세 뷰')],
+        'video_analysis': [('🏠', '홈'), ('🔧', '분석 도구'), ('📹', '영상 분석')],
+        'statistics': [('🏠', '홈'), ('📊', '관리'), ('📈', '통계 및 리포트')],
+        'settings': [('🏠', '홈'), ('📊', '관리'), ('⚙️', '시스템 설정')]
+    }
+    
+    breadcrumb_items = breadcrumb_map.get(current_page, [('🏠', '홈')])
+    
+    # 브레드크럼 HTML 생성
+    breadcrumb_html = '<div style="margin: 1rem 0; padding: 0.5rem 0; border-bottom: 1px solid #dee2e6;">'
+    for i, (icon, name) in enumerate(breadcrumb_items):
+        if i > 0:
+            breadcrumb_html += ' <span style="color: #6c757d; margin: 0 0.5rem;">></span> '
+        
+        if i == len(breadcrumb_items) - 1:  # 현재 페이지
+            breadcrumb_html += f'<span style="color: #667eea; font-weight: 600;">{icon} {name}</span>'
+        else:
+            breadcrumb_html += f'<span style="color: #6c757d;">{icon} {name}</span>'
+    
+    breadcrumb_html += '</div>'
+    st.markdown(breadcrumb_html, unsafe_allow_html=True)
 
 def render_header():
     """메인 헤더 렌더링"""
@@ -190,20 +327,20 @@ def render_sidebar():
     """사이드바 네비게이션 렌더링"""
     st.sidebar.title("📊 대시보드 메뉴")
     
-    # 메뉴 항목들을 그룹으로 분류
+    # 메뉴 항목들을 그룹으로 분류 - PRD 명세에 따른 Master-Detail 구조
     menu_groups = {
         "📋 핵심 기능": {
             "🏠 홈": "home",
-            "💰 수익화 후보": "monetizable_candidates", 
-            "🔍 필터링 목록": "filtered_products"
+            "💰 수익화 가능 후보": "monetizable_candidates", 
+            "🔍 수익화 필터링 목록": "filtered_products"
         },
-        "🔧 도구": {
+        "🔧 분석 도구": {
             "🤖 AI 콘텐츠 생성": "ai_content_generator",
             "📹 영상 분석": "video_analysis"
         },
-        "📊 관리": {
+        "📊 관리 및 설정": {
             "📈 통계 및 리포트": "statistics",
-            "⚙️ 설정": "settings"
+            "⚙️ 시스템 설정": "settings"
         }
     }
     
@@ -235,9 +372,12 @@ def render_sidebar():
                 selected_page = page_value
         st.sidebar.markdown("---")
     
-    # 페이지 선택 처리
+    # 페이지 선택 처리 및 상태 유지
     if selected_page:
         st.session_state.current_page = selected_page
+        # 페이지 전환 시 이전 상태 정리
+        if 'selected_product' in st.session_state and selected_page != 'detail_view':
+            del st.session_state.selected_product
         st.rerun()
     
     # 시스템 상태 정보
@@ -393,6 +533,9 @@ def main():
     
     # 헤더 렌더링
     render_header()
+    
+    # 브레드크럼 네비게이션 렌더링
+    render_breadcrumb()
     
     # 사이드바 렌더링
     render_sidebar()
