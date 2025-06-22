@@ -4,7 +4,7 @@ current_milestone_id: M02
 highest_sprint_in_milestone: S02
 current_sprint_id: S01_M02
 status: active
-last_updated: 2025-06-23 05:23
+last_updated: 2025-06-23 05:43
 ---
 
 # Project Manifest: 연예인 추천 아이템 자동화 릴스 시스템
