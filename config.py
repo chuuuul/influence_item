@@ -19,6 +19,8 @@ class Config:
     
     # API 키
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    COUPANG_ACCESS_KEY: str = os.getenv("COUPANG_ACCESS_KEY", "")
+    COUPANG_SECRET_KEY: str = os.getenv("COUPANG_SECRET_KEY", "")
     
     # Whisper 모델 설정
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "small")
@@ -55,6 +57,26 @@ class Config:
     YOLO_IOU_THRESHOLD: float = float(os.getenv("YOLO_IOU_THRESHOLD", "0.45"))
     YOLO_IMAGE_SIZE: int = int(os.getenv("YOLO_IMAGE_SIZE", "640"))
     
+    # GPU 최적화 설정
+    GPU_BATCH_SIZE: int = int(os.getenv("GPU_BATCH_SIZE", "8"))
+    GPU_MEMORY_FRACTION: float = float(os.getenv("GPU_MEMORY_FRACTION", "0.9"))
+    ENABLE_GPU_OPTIMIZATION: bool = os.getenv("ENABLE_GPU_OPTIMIZATION", "true").lower() == "true"
+    AUTO_BATCH_SIZE: bool = os.getenv("AUTO_BATCH_SIZE", "true").lower() == "true"
+    BASELINE_THROUGHPUT: float = float(os.getenv("BASELINE_THROUGHPUT", "10.0"))
+    
+    # 음성+시각 데이터 융합 설정
+    FUSION_TIME_TOLERANCE: float = float(os.getenv("FUSION_TIME_TOLERANCE", "2.0"))
+    TEXT_SIMILARITY_THRESHOLD: float = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.6"))
+    FUSION_CONFIDENCE_THRESHOLD: float = float(os.getenv("FUSION_CONFIDENCE_THRESHOLD", "0.7"))
+    
+    # 쿠팡 파트너스 API 설정
+    COUPANG_API_TIMEOUT: int = int(os.getenv("COUPANG_API_TIMEOUT", "30"))
+    COUPANG_MAX_RETRIES: int = int(os.getenv("COUPANG_MAX_RETRIES", "3"))
+    COUPANG_RETRY_DELAY: float = float(os.getenv("COUPANG_RETRY_DELAY", "1.0"))
+    COUPANG_REQUEST_LIMIT_PER_HOUR: int = int(os.getenv("COUPANG_REQUEST_LIMIT_PER_HOUR", "9"))  # 안전 마진
+    COUPANG_SEARCH_LIMIT: int = int(os.getenv("COUPANG_SEARCH_LIMIT", "50"))
+    COUPANG_CACHE_TTL: int = int(os.getenv("COUPANG_CACHE_TTL", "3600"))  # 1시간 캐시
+    
     # YouTube 다운로드 설정
     YT_DLP_OPTS: dict = {
         'format': 'bestaudio/best',
@@ -69,6 +91,10 @@ class Config:
         """설정 유효성 검사"""
         if not cls.GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
+            
+        # 쿠팡 API 키는 선택사항이지만 둘 다 설정되어야 함
+        if bool(cls.COUPANG_ACCESS_KEY) != bool(cls.COUPANG_SECRET_KEY):
+            raise ValueError("COUPANG_ACCESS_KEY와 COUPANG_SECRET_KEY는 둘 다 설정되거나 둘 다 비어있어야 합니다.")
         
         # 임시 디렉토리 생성
         cls.TEMP_DIR.mkdir(parents=True, exist_ok=True)
