@@ -1,0 +1,80 @@
+"""
+설정 관리 모듈
+
+환경 변수와 기본 설정을 관리합니다.
+"""
+
+import os
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
+
+
+class Config:
+    """애플리케이션 설정 클래스"""
+    
+    # API 키
+    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    
+    # Whisper 모델 설정
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "small")
+    
+    # Gemini API 설정
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001")
+    GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
+    GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
+    GEMINI_TIMEOUT: int = int(os.getenv("GEMINI_TIMEOUT", "60"))
+    
+    # 파일 경로 설정
+    TEMP_DIR: Path = Path(os.getenv("TEMP_DIR", "/tmp/influence_item"))
+    PROJECT_ROOT: Path = Path(__file__).parent
+    
+    # 로깅 설정
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    
+    # 처리 설정
+    MAX_CONCURRENT_DOWNLOADS: int = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
+    DEFAULT_TIMEOUT: int = int(os.getenv("DEFAULT_TIMEOUT", "300"))
+    
+    # OCR 설정
+    OCR_LANGUAGES: list = os.getenv("OCR_LANGUAGES", "ko,en").split(",")
+    OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.5"))
+    USE_GPU: bool = os.getenv("USE_GPU", "true").lower() == "true"
+    
+    # 이미지 처리 설정
+    MAX_IMAGE_SIZE: int = int(os.getenv("MAX_IMAGE_SIZE", "2048"))
+    MIN_IMAGE_SIZE: int = int(os.getenv("MIN_IMAGE_SIZE", "64"))
+    
+    # YOLO 객체 탐지 설정
+    YOLO_MODEL_NAME: str = os.getenv("YOLO_MODEL_NAME", "yolo11n.pt")
+    YOLO_CONFIDENCE_THRESHOLD: float = float(os.getenv("YOLO_CONFIDENCE_THRESHOLD", "0.25"))
+    YOLO_IOU_THRESHOLD: float = float(os.getenv("YOLO_IOU_THRESHOLD", "0.45"))
+    YOLO_IMAGE_SIZE: int = int(os.getenv("YOLO_IMAGE_SIZE", "640"))
+    
+    # YouTube 다운로드 설정
+    YT_DLP_OPTS: dict = {
+        'format': 'bestaudio/best',
+        'extractaudio': True,
+        'audioformat': 'wav',
+        'outtmpl': str(TEMP_DIR / '%(title)s.%(ext)s'),
+        'noplaylist': True,
+    }
+    
+    @classmethod
+    def validate(cls) -> None:
+        """설정 유효성 검사"""
+        if not cls.GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
+        
+        # 임시 디렉토리 생성
+        cls.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        
+    @classmethod
+    def get_temp_dir(cls) -> Path:
+        """임시 디렉토리 경로 반환"""
+        cls.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        return cls.TEMP_DIR
