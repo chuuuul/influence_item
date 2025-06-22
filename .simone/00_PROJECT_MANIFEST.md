@@ -1,10 +1,10 @@
 ---
 project_name: 연예인 추천 아이템 자동화 릴스 시스템
-current_milestone_id: M01
-highest_sprint_in_milestone: S03
-current_sprint_id: S03
+current_milestone_id: M02
+highest_sprint_in_milestone: S02
+current_sprint_id: S01_M02
 status: active
-last_updated: 2025-06-23 04:47:00
+last_updated: 2025-06-23 05:23
 ---
 
 # Project Manifest: 연예인 추천 아이템 자동화 릴스 시스템
@@ -25,10 +25,10 @@ last_updated: 2025-06-23 04:47:00
 
 ## 2. 현재 진행 상황
 
-- **마일스톤:** M01 - AI Pipeline Foundation
-- **스프린트:** S03 - Filtering & Verification System
+- **마일스톤:** M02 - Management Dashboard
+- **스프린트:** S01, S02 계획 완료 - 태스크 생성 대기 중
 
-## 3. 현재 마일스톤의 스프린트들
+## 3. 이전 마일스톤 스프린트들 (M01 - 완료)
 
 ### S01 Core AI Engine (✅ COMPLETED)
 
@@ -55,22 +55,40 @@ last_updated: 2025-06-23 04:47:00
 ✅ T04_S03 - 자동 필터링 워크플로우 (완료)
 ✅ T05_S03 - 최종 JSON 스키마 완성 (완료 - 2025-06-23 04:47)
 
-## 4. 주요 문서
+## 4. 현재 마일스톤 스프린트들 (M02 - 진행 중)
+
+### S01 Dashboard Core Features (🚧 IN PROGRESS)
+**목표**: PRD SPEC-DASH-01,02,05 핵심 기능 구현
+- 고급 정렬 및 필터링 시스템
+- YouTube 타임스탬프 자동 재생  
+- 상태 기반 워크플로우 관리
+- 운영자 기본 워크플로우 완성
+
+**진행 상황**: 
+✅ T01_S01_M02 - Dashboard Project Setup 완료 (2025-06-23)
+
+### S02 Dashboard Enhancement & Production (📋 PLANNED)  
+**목표**: PRD SPEC-DASH-03,04 및 운영 준비 완성
+- AI 생성 콘텐츠 관리 도구
+- 반자동 보조 검색 기능
+- 성능 최적화 및 UX 개선
+- v1.0 시스템 운영 준비 완료
+
+## 5. 주요 문서
 
 - [아키텍처 문서](./01_PROJECT_DOCS/ARCHITECTURE.md)
-- [현재 마일스톤 요구사항](./02_REQUIREMENTS/M01_AI_Pipeline_Foundation/)
+- [현재 마일스톤 요구사항](./02_REQUIREMENTS/M02_Management_Dashboard/)
 - [일반 태스크](./04_GENERAL_TASKS/)
 - [PRD 문서](../prd.md)
 
-## 5. 빠른 링크
+## 6. 빠른 링크
 
-- **현재 스프린트:** [S03 Filtering & Verification System](./03_SPRINTS/S03_M01_Filtering_Verification_System/)
-- **활성 태스크:** 스프린트 폴더에서 T##_S03_*.md 파일 확인
-- **완료된 스프린트:** [S01 Core AI Engine](./03_SPRINTS/S01_M01_Core_AI_Engine/)
-- **다음 스프린트:** [S03 Filtering & Verification System](./03_SPRINTS/S03_M01_Filtering_Verification_System/)
+- **다음 스프린트:** [S01 Dashboard Core Features](./03_SPRINTS/S01_M02_Dashboard_Core_Features/)
+- **현재 마일스톤:** [M02 Management Dashboard](./02_REQUIREMENTS/M02_Management_Dashboard/)
+- **완료된 마일스톤:** [M01 AI Pipeline Foundation](./01_MILESTONES/M01_Core_System_Foundation.md)
 - **프로젝트 리뷰:** [최신 리뷰](./10_STATE_OF_PROJECT/)
 
-## 6. 핵심 성공 지표
+## 7. 핵심 성공 지표
 
 ### 기술적 목표
 - AI 분석 정확도: >90%
@@ -82,9 +100,18 @@ last_updated: 2025-06-23 04:47:00
 - 수익화 전환율: >30%
 - 시스템 ROI: >300%
 
-## 7. 다음 마일스톤 예정
+## 8. 이전 마일스톤 완료
 
-**M02 - Management Dashboard (예정일: 2025-07-16)**
+**M01 - AI Pipeline Foundation (완료일: 2025-06-22)**
+- ✅ 완전 자동화 AI 파이프라인 구축
+- ✅ Whisper + Gemini 2-Pass 분석 시스템
+- ✅ PPL 필터링 및 매력도 스코어링
+- ✅ 쿠팡 파트너스 API 연동
+
+## 9. 현재 마일스톤 목표
+
+**M02 - Management Dashboard (진행 중)**
 - Streamlit 기반 관리 대시보드
-- 실시간 후보 검토 및 승인 시스템
+- 실시간 후보 검토 및 승인 시스템  
 - AI 생성 콘텐츠 관리 도구
+- v1.0 시스템 완성
