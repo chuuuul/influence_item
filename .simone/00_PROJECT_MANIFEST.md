@@ -1,49 +1,87 @@
 ---
-project_name: Your Project Name
+project_name: 연예인 추천 아이템 자동화 릴스 시스템
 current_milestone_id: M01
-highest_sprint_in_milestone: S02
+highest_sprint_in_milestone: S03
 current_sprint_id: S01
 status: active
-last_updated: 2025-01-01 00:00:00
+last_updated: 2025-06-22 13:15:00
 ---
 
-# Project Manifest: Your Project Name
+# Project Manifest: 연예인 추천 아이템 자동화 릴스 시스템
 
-This manifest serves as the central reference point for the project. It tracks the current focus and links to key documentation.
+이 매니페스트는 프로젝트의 중앙 참조점 역할을 하며, 현재 진행 상황과 주요 문서들을 연결합니다.
 
-## 1. Project Vision & Overview
+## 1. 프로젝트 비전 & 개요
 
-[Describe your project's core vision, purpose, and goals here. What problem does it solve? Who is it for? What makes it unique?]
+연예인이 YouTube 영상에서 사용하는 제품을 AI로 자동 탐지하고, Instagram Reels용 콘텐츠를 생성하여 쿠팡 파트너스를 통한 제휴 마케팅 수익을 창출하는 완전 자동화 시스템입니다.
 
-This project follows a milestone-based development approach.
+**핵심 가치:**
+- 수동 작업 80% 감소를 통한 효율성 극대화
+- AI 2-Pass 파이프라인으로 90% 이상 정확도 달성
+- 월 15,000원 비용으로 월 900편 영상 분석 가능
+- 24/7 무인 자동화 운영
 
-## 2. Current Focus
+이 프로젝트는 마일스톤 기반 개발 방식을 따릅니다.
 
-- **Milestone:** M01 - [Your First Milestone Name]
-- **Sprint:** S01 - [Current Sprint Focus]
+## 2. 현재 진행 상황
 
-## 3. Sprints in Current Milestone
+- **마일스톤:** M01 - AI Pipeline Foundation
+- **스프린트:** S01 - Core AI Engine
 
-### S01 [Sprint Name] (🚧 IN PROGRESS)
+## 3. 현재 마일스톤의 스프린트들
 
-🚧 [First deliverable or feature]
-📋 [Second deliverable or feature]
-📋 [Third deliverable or feature]
+### S01 Core AI Engine (📋 PLANNED)
 
-### S02 [Sprint Name] (📋 PLANNED)
+📋 Whisper 음성 인식 모듈 구현
+📋 Gemini 1차/2차 분석 프롬프트 엔지니어링
+📋 기본 JSON 스키마 데이터 출력
+📋 통합 파이프라인 구축
+📋 테스트 케이스 검증
 
-📋 [First planned deliverable]
-📋 [Second planned deliverable]
-📋 [Third planned deliverable]
+### S02 Visual Analysis Integration (📋 PLANNED)
 
-## 4. Key Documentation
+📋 EasyOCR 텍스트 인식 구현
+📋 YOLOv8 객체 인식 통합
+📋 음성+시각 데이터 융합 로직
+📋 GPU 서버 최적화
+📋 타겟 시간대 시각 분석
 
-- [Architecture Documentation](./01_PROJECT_DOCS/ARCHITECTURE.md)
-- [Current Milestone Requirements](./02_REQUIREMENTS/M01_[Milestone_Name]/)
-- [General Tasks](./04_GENERAL_TASKS/)
+### S03 Filtering & Verification System (📋 PLANNED)
 
-## 5. Quick Links
+📋 PPL 확률 분석 알고리즘
+📋 쿠팡 파트너스 API 연동
+📋 매력도 스코어링 시스템
+📋 수익화 검증 워크플로우
+📋 데이터 필터링 자동화
 
-- **Current Sprint:** [S01 Sprint Folder](./03_SPRINTS/S01_M01_[Sprint_Name]/)
-- **Active Tasks:** Check sprint folder for T##_S01_*.md files
-- **Project Reviews:** [Latest Review](./10_STATE_OF_PROJECT/)
+## 4. 주요 문서
+
+- [아키텍처 문서](./01_PROJECT_DOCS/ARCHITECTURE.md)
+- [현재 마일스톤 요구사항](./02_REQUIREMENTS/M01_AI_Pipeline_Foundation/)
+- [일반 태스크](./04_GENERAL_TASKS/)
+- [PRD 문서](../prd.md)
+
+## 5. 빠른 링크
+
+- **현재 스프린트:** [S01 Core AI Engine](./03_SPRINTS/S01_M01_Core_AI_Engine/)
+- **활성 태스크:** 스프린트 폴더에서 T##_S01_*.md 파일 확인
+- **프로젝트 리뷰:** [최신 리뷰](./10_STATE_OF_PROJECT/)
+
+## 6. 핵심 성공 지표
+
+### 기술적 목표
+- AI 분석 정확도: >90%
+- 영상당 처리 시간: <3분
+- 시스템 가동률: >99%
+
+### 비즈니스 목표  
+- 일 평균 승인 후보: >5개
+- 수익화 전환율: >30%
+- 시스템 ROI: >300%
+
+## 7. 다음 마일스톤 예정
+
+**M02 - Management Dashboard (예정일: 2025-07-16)**
+- Streamlit 기반 관리 대시보드
+- 실시간 후보 검토 및 승인 시스템
+- AI 생성 콘텐츠 관리 도구

@@ -20,6 +20,7 @@ Check <$ARGUMENTS>:
 ## Safety Guidelines
 
 - **NEVER** modify critical files (.env, alembic migrations, production configs)
+- **NEVER** .calude/commands 폴더의 내용을 추가/수정/제거 하지 말 것
 - **STOP** if you encounter database schema changes
 - **STOP** if you need to delete more than 5 files
 - **STOP** if tests are failing after your changes
@@ -40,6 +41,8 @@ Before you start:
 Also consider <$ARGUMENTS> - if anything between <> can be considered additional instructions, prioritize them in the process.
 
 Get the current datetime stamp from the system and remember it
+
+- PRD.md 문서를 무조건 읽고 반드시 PRD문서에 정의 되어있는 기능만 구현 할 것.
 
 ### FIND OPEN WORK
 
@@ -85,7 +88,6 @@ Execute based on mode:
 - if you have touched this task before ignore it and jump to the next task
 - if you can't find a task that you have not tried fixing before jump to ### EXECUTE PROJECT REVIEW
 - if you find a task that you cannot fix because the work was done already, close the task and note in Output Log of task.
-- **BEFORE STARTING**: Create a git branch for the task: `git checkout -b task/<task-id>`
 - **USE A SUBAGENT** and have it include @.claude/commands/simone/do_task.md with the Task ID as Argument to execute the Task.
 - **AFTER TASK COMPLETION**: Run tests to verify nothing broke using test.md command (@.claude/commands/simone/test.md)
 - on any failure in the task execution assess the severity of the error:
@@ -154,4 +156,8 @@ Your work is done. Move to `## CREATE SUMMARY`
   - Next recommended action
 - Report the result of the review to the user including the duration.
 
-Your work is done. Thank you.
+
+## 작업내용 정리
+- 작업이 마무리 되었다면 기존에 존재하던 PROJECT_MANIFEST.md에 작업 사항 반영. 무조건 기존에 있던 PROJECT_MANIFEST.md에 반영 할 것. 새로 생성 금지.
+- 리포트에 개선되어야 하는 사항이 리포트 되었다면 simone의 /create_general_task 명령을 활용 하여 일반 테스크로 생성
+- 커밋 안된 작업 있다면 작업 내용 커밋하고 마스터에 반영
