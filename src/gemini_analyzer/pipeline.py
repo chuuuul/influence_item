@@ -27,6 +27,8 @@ from ..monetization.monetization_service import MonetizationService
 from ..scoring.score_calculator import ScoreCalculator, ScoringInput
 from ..scoring.influencer_analyzer import ChannelMetrics
 from .models import TargetTimeframe
+from ..schema.models import ProductRecommendationCandidate, SourceInfo, CandidateInfo, MonetizationInfo, StatusInfo, ScoreDetails
+from ..schema.formatters import APIResponseFormatter
 
 
 class PipelineStatus(Enum):
@@ -182,7 +184,13 @@ class AIAnalysisPipeline:
                                                {"final_results": final_results}, 
                                                ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "monetization", "scoring"])
             
-            # 9단계: 후처리 및 정리
+            # 9단계: 최종 JSON 스키마 매핑
+            final_results = await self._step_final_schema_mapping(final_results, video_url)
+            self.state_manager.create_checkpoint(video_url, "schema_mapping_complete", 
+                                               {"final_results": final_results}, 
+                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "monetization", "scoring", "schema_mapping"])
+            
+            # 10단계: 후처리 및 정리
             await self._step_finalization(audio_path, video_path)
             
             # 파이프라인 성공 완료
@@ -650,6 +658,117 @@ class AIAnalysisPipeline:
                     }
             
             return analysis_results
+
+    async def _step_final_schema_mapping(
+        self,
+        analysis_results: List[Dict[str, Any]],
+        video_url: str
+    ) -> List[Dict[str, Any]]:
+        """9단계: 최종 JSON 스키마 매핑"""
+        step_start = time.time()
+        
+        try:
+            self.logger.info("최종 JSON 스키마 매핑 시작")
+            
+            mapped_results = []
+            formatter = APIResponseFormatter()
+            
+            for result in analysis_results:
+                try:
+                    # PRD 완전한 JSON 스키마로 매핑
+                    mapped_result = self._map_to_prd_schema(result, video_url)
+                    
+                    # Pydantic 모델로 검증
+                    validated_candidate = ProductRecommendationCandidate(**mapped_result)
+                    
+                    # API 응답 형식으로 포맷팅
+                    api_formatted = formatter.format_candidate_response(validated_candidate)
+                    
+                    mapped_results.append(api_formatted)
+                    
+                    self.logger.debug(f"스키마 매핑 완료: {validated_candidate.get_final_product_name()}")
+                    
+                except Exception as e:
+                    self.logger.warning(f"개별 결과 스키마 매핑 실패: {str(e)}")
+                    # 매핑 실패 시 원본 결과 유지
+                    mapped_results.append(result)
+                    continue
+            
+            step_time = time.time() - step_start
+            self._log_step("schema_mapping", "success", 
+                         f"스키마 매핑 완료 - {len(mapped_results)}개 결과 검증", step_time)
+            
+            return mapped_results
+            
+        except Exception as e:
+            step_time = time.time() - step_start
+            self._log_step("schema_mapping", "error", f"스키마 매핑 실패: {str(e)}", step_time)
+            
+            # 매핑 실패 시 원본 결과 반환
+            return analysis_results
+    
+    def _map_to_prd_schema(self, result: Dict[str, Any], video_url: str) -> Dict[str, Any]:
+        """개별 결과를 PRD 완전한 JSON 스키마로 매핑"""
+        from datetime import datetime
+        import re
+        
+        # 비디오 URL에서 채널명과 제목 추출 (임시 구현)
+        # TODO: 실제 YouTube API로 교체
+        url_pattern = r'youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
+        video_id_match = re.search(url_pattern, video_url)
+        video_id = video_id_match.group(1) if video_id_match else "unknown"
+        
+        candidate_info = result.get('candidate_info', {})
+        monetization_info = result.get('monetization_info', {})
+        status_info = result.get('status_info', {})
+        
+        # 현재 시간
+        now = datetime.now().isoformat()
+        
+        return {
+            "source_info": {
+                "celebrity_name": result.get('source_info', {}).get('celebrity_name', '알려지지 않은 연예인'),
+                "channel_name": result.get('source_info', {}).get('channel_name', '알려지지 않은 채널'),
+                "video_title": result.get('source_info', {}).get('video_title', '영상 제목'),
+                "video_url": video_url,
+                "upload_date": result.get('source_info', {}).get('upload_date', datetime.now().strftime('%Y-%m-%d'))
+            },
+            "candidate_info": {
+                "product_name_ai": candidate_info.get('product_name_ai', ''),
+                "product_name_manual": candidate_info.get('product_name_manual'),
+                "clip_start_time": candidate_info.get('clip_start_time', 0),
+                "clip_end_time": candidate_info.get('clip_end_time', 0),
+                "category_path": candidate_info.get('category_path', ['기타']),
+                "features": candidate_info.get('features', []),
+                "score_details": {
+                    "total": candidate_info.get('score_details', {}).get('total', 50),
+                    "sentiment_score": candidate_info.get('score_details', {}).get('sentiment_score', 0.5),
+                    "endorsement_score": candidate_info.get('score_details', {}).get('endorsement_score', 0.5),
+                    "influencer_score": candidate_info.get('score_details', {}).get('influencer_score', 0.5)
+                },
+                "hook_sentence": candidate_info.get('hook_sentence', ''),
+                "summary_for_caption": candidate_info.get('summary_for_caption', ''),
+                "target_audience": candidate_info.get('target_audience', []),
+                "price_point": candidate_info.get('price_point', '일반'),
+                "endorsement_type": candidate_info.get('endorsement_type', '자연스러운 언급'),
+                "recommended_titles": candidate_info.get('recommended_titles', []),
+                "recommended_hashtags": candidate_info.get('recommended_hashtags', [])
+            },
+            "monetization_info": {
+                "is_coupang_product": monetization_info.get('is_coupang_product', False),
+                "coupang_url_ai": monetization_info.get('coupang_url_ai'),
+                "coupang_url_manual": monetization_info.get('coupang_url_manual')
+            },
+            "status_info": {
+                "current_status": status_info.get('current_status', 'needs_review'),
+                "is_ppl": status_info.get('is_ppl', False),
+                "ppl_confidence": status_info.get('ppl_confidence', 0.1),
+                "last_updated": now
+            },
+            "schema_version": "1.0",
+            "created_at": now,
+            "updated_at": now
+        }
     
     def _extract_channel_metrics(self, video_url: str) -> ChannelMetrics:
         """비디오 URL에서 채널 메트릭스 추출 (임시 구현)"""
