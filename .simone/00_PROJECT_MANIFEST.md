@@ -4,7 +4,7 @@ current_milestone_id: M02
 highest_sprint_in_milestone: S02
 current_sprint_id: S01_M02
 status: active
-last_updated: 2025-06-23 06:10
+last_updated: 2025-06-23 07:04
 ---
 
 # Project Manifest: 연예인 추천 아이템 자동화 릴스 시스템
@@ -69,6 +69,11 @@ last_updated: 2025-06-23 06:10
 ✅ T02_S01_M02 - Main Navigation Structure 완료 (2025-06-23 05:42)
 ✅ T03_S01_M02 - Candidate List Layout 완료 (2025-06-23 06:01)
 ✅ T04_S01_M02 - Data Table Component 완료 (2025-06-23 06:10)
+✅ T05_S01_M02 - Detail View Structure 완료 (2025-06-23 06:15)
+✅ T06_S01_M02 - YouTube Player Integration 완료 (2025-06-23 06:32)
+✅ T07_S01_M02 - AI Content Display 완료 (2025-06-23 06:42)
+✅ T08_S01_M02 - Workflow State Management 완료 (2025-06-23 06:45)
+✅ T09_S01_M02 - Filtered Products Management 완료 (2025-06-23 07:05)
 
 ### S02 Dashboard Enhancement & Production (📋 PLANNED)  
 **목표**: PRD SPEC-DASH-03,04 및 운영 준비 완성
@@ -82,6 +87,7 @@ last_updated: 2025-06-23 06:10
 - [아키텍처 문서](./01_PROJECT_DOCS/ARCHITECTURE.md)
 - [현재 마일스톤 요구사항](./02_REQUIREMENTS/M02_Management_Dashboard/)
 - [일반 태스크](./04_GENERAL_TASKS/)
+  - [ ] [T001: Project File Organization Cleanup](./04_GENERAL_TASKS/T001_Project_File_Organization_Cleanup.md) - Status: Not Started
 - [PRD 문서](../prd.md)
 
 ## 6. 빠른 링크

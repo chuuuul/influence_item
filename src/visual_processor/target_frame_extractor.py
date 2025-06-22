@@ -38,7 +38,7 @@ class TargetFrameExtractor:
         
         # 컴포넌트 초기화
         self.gpu_optimizer = GPUOptimizer()
-        self.ocr_processor = OCRProcessor(gpu_optimizer=self.gpu_optimizer)
+        self.ocr_processor = OCRProcessor(config=self.config)
         self.object_detector = ObjectDetector(gpu_optimizer=self.gpu_optimizer)
         
         # 기본 설정

@@ -164,7 +164,7 @@ class ImagePreprocessor:
             diff = cv2.absdiff(image, blurred)
             noise_level = np.mean(diff)
             
-            return noise_level > 10  # 임계값
+            return bool(noise_level > 10)  # 임계값 - bool로 명시적 변환
             
         except Exception:
             return False
@@ -216,7 +216,7 @@ class ImagePreprocessor:
             dynamic_range = non_zero_indices[-1] - non_zero_indices[0]
             
             # 대비가 낮으면 향상 필요
-            return dynamic_range < 200  # 0-255 범위에서
+            return bool(dynamic_range < 200)  # 0-255 범위에서 - bool로 명시적 변환
             
         except Exception:
             return False
@@ -360,7 +360,7 @@ class ImagePreprocessor:
             std_dev = np.std(image)
             
             # 분산이 낮으면 이진화가 도움될 수 있음
-            return std_dev < 40
+            return bool(std_dev < 40)  # bool로 명시적 변환
             
         except Exception:
             return False

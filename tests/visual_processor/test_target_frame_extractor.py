@@ -8,6 +8,10 @@ import pytest
 import numpy as np
 import tempfile
 import os
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 

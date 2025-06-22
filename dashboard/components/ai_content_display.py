@@ -1,6 +1,6 @@
 """
-S03-005: AI 생성 콘텐츠 표시 및 복사 기능
-추천 제목, 해시태그, 캡션 표시 및 복사
+T07_S01_M02: AI Generated Content Display Component
+PRD SPEC-DASH-03 요구사항에 따라 AI가 생성한 모든 콘텐츠 정보를 복사 기능과 함께 제공
 """
 
 import streamlit as st
@@ -9,6 +9,286 @@ import re
 from datetime import datetime
 import pyperclip
 import os
+from typing import Dict, List, Any, Optional
+
+def extract_ai_content_from_json_schema(candidate_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    PRD JSON 스키마에서 AI 생성 콘텐츠 추출
+    candidate_data: PRD JSON 스키마 구조의 데이터
+    """
+    if not candidate_data or 'candidate_info' not in candidate_data:
+        return {
+            'recommended_titles': [],
+            'recommended_hashtags': [],
+            'summary_for_caption': '',
+            'hook_sentence': '',
+            'target_audience': [],
+            'price_point': '',
+            'endorsement_type': ''
+        }
+    
+    candidate_info = candidate_data['candidate_info']
+    
+    return {
+        'recommended_titles': candidate_info.get('recommended_titles', []),
+        'recommended_hashtags': candidate_info.get('recommended_hashtags', []),
+        'summary_for_caption': candidate_info.get('summary_for_caption', ''),
+        'hook_sentence': candidate_info.get('hook_sentence', ''),
+        'target_audience': candidate_info.get('target_audience', []),
+        'price_point': candidate_info.get('price_point', ''),
+        'endorsement_type': candidate_info.get('endorsement_type', '')
+    }
+
+def copy_to_clipboard_with_feedback(text: str, content_type: str = "텍스트") -> None:
+    """클립보드 복사 및 피드백 표시"""
+    try:
+        # JavaScript를 통한 클립보드 API 사용 (Streamlit 환경에서 더 안정적)
+        st.write(f"""
+        <script>
+        navigator.clipboard.writeText(`{text.replace('`', '\\`')}`).then(function() {{
+            console.log('복사 성공: {content_type}');
+        }}).catch(function(err) {{
+            console.error('복사 실패: ', err);
+        }});
+        </script>
+        """, unsafe_allow_html=True)
+        
+        # 백업: pyperclip 사용
+        pyperclip.copy(text)
+        st.success(f"✅ {content_type}이(가) 복사되었습니다!")
+        
+    except Exception as e:
+        # 세션 스테이트에 저장
+        if 'clipboard_content' not in st.session_state:
+            st.session_state.clipboard_content = {}
+        st.session_state.clipboard_content[content_type] = text
+        st.info(f"💾 {content_type}이(가) 임시 저장되었습니다. (복사 기능 제한)")
+
+def render_ai_titles_section(ai_content: Dict[str, Any]) -> None:
+    """AI 생성 제목 목록 표시 및 개별 복사 기능"""
+    st.markdown("### 📝 AI 생성 제목")
+    
+    titles = ai_content.get('recommended_titles', [])
+    
+    if not titles:
+        st.warning("⚠️ AI 생성 제목이 없습니다.")
+        return
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.markdown("**추천 제목 목록:**")
+        for i, title in enumerate(titles, 1):
+            st.markdown(f"`{i}.` {title}")
+    
+    with col2:
+        st.markdown("**복사 액션**")
+        for i, title in enumerate(titles, 1):
+            if st.button(f"📋 제목 {i}", key=f"copy_title_{i}", use_container_width=True):
+                copy_to_clipboard_with_feedback(title, f"제목 {i}")
+
+def render_ai_hashtags_section(ai_content: Dict[str, Any]) -> None:
+    """AI 생성 해시태그 표시 및 전체 복사 기능"""
+    st.markdown("### #️⃣ AI 생성 해시태그")
+    
+    hashtags = ai_content.get('recommended_hashtags', [])
+    
+    if not hashtags:
+        st.warning("⚠️ AI 생성 해시태그가 없습니다.")
+        return
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        # 해시태그를 보기 좋게 표시
+        hashtag_text = " ".join(hashtags)
+        st.markdown("**생성된 해시태그:**")
+        st.markdown(f"> {hashtag_text}")
+        
+        # 개별 해시태그 표시
+        st.markdown("**개별 해시태그:**")
+        for hashtag in hashtags:
+            st.markdown(f"• `{hashtag}`")
+    
+    with col2:
+        st.markdown("**복사 액션**")
+        
+        # 전체 해시태그 복사
+        if st.button("📋 전체 복사", key="copy_all_hashtags", use_container_width=True, type="primary"):
+            copy_to_clipboard_with_feedback(hashtag_text, "해시태그 전체")
+        
+        # 개별 해시태그 복사
+        st.markdown("**개별 복사:**")
+        for i, hashtag in enumerate(hashtags):
+            if st.button(f"`{hashtag[:8]}...`", key=f"copy_hashtag_{i}", use_container_width=True):
+                copy_to_clipboard_with_feedback(hashtag, f"해시태그 '{hashtag}'")
+
+def render_ai_caption_section(ai_content: Dict[str, Any]) -> None:
+    """AI 생성 캡션/요약 표시 및 복사 기능"""
+    st.markdown("### 📖 AI 생성 캡션")
+    
+    summary = ai_content.get('summary_for_caption', '')
+    
+    if not summary:
+        st.warning("⚠️ AI 생성 캡션이 없습니다.")
+        return
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.markdown("**캡션용 요약:**")
+        st.text_area("", value=summary, height=150, disabled=True, key="caption_display")
+        
+        # 글자 수 표시
+        char_count = len(summary)
+        st.info(f"📝 총 {char_count}자")
+    
+    with col2:
+        st.markdown("**복사 액션**")
+        
+        if st.button("📋 캡션 복사", key="copy_caption", use_container_width=True, type="primary"):
+            copy_to_clipboard_with_feedback(summary, "캡션")
+
+def render_hook_sentence_section(ai_content: Dict[str, Any]) -> None:
+    """후크 문장 표시 및 복사 기능"""
+    st.markdown("### 🎣 후크 문장")
+    
+    hook = ai_content.get('hook_sentence', '')
+    
+    if not hook:
+        st.warning("⚠️ 후크 문장이 없습니다.")
+        return
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.markdown("**후크 문장:**")
+        st.markdown(f"> {hook}")
+    
+    with col2:
+        st.markdown("**복사 액션**")
+        
+        if st.button("📋 후크 복사", key="copy_hook", use_container_width=True, type="primary"):
+            copy_to_clipboard_with_feedback(hook, "후크 문장")
+
+def render_additional_info_section(ai_content: Dict[str, Any]) -> None:
+    """추가 정보 표시 (타겟 오디언스, 가격대 등)"""
+    st.markdown("### ℹ️ 추가 정보")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        target_audience = ai_content.get('target_audience', [])
+        if target_audience:
+            st.markdown("**타겟 오디언스:**")
+            for audience in target_audience:
+                st.markdown(f"• {audience}")
+    
+    with col2:
+        price_point = ai_content.get('price_point', '')
+        if price_point:
+            st.markdown("**가격대:**")
+            st.markdown(f"• {price_point}")
+    
+    with col3:
+        endorsement_type = ai_content.get('endorsement_type', '')
+        if endorsement_type:
+            st.markdown("**추천 유형:**")
+            st.markdown(f"• {endorsement_type}")
+
+def render_empty_state() -> None:
+    """빈 데이터 상태 처리"""
+    st.warning("⚠️ AI 생성 콘텐츠가 없습니다.")
+    st.info("""
+    **가능한 원인:**
+    • 아직 AI 분석이 완료되지 않았습니다
+    • 데이터 구조에 문제가 있습니다
+    • candidate_info 섹션이 누락되었습니다
+    """)
+
+def render_ai_content_display_component(candidate_data: Dict[str, Any]) -> None:
+    """
+    PRD JSON 스키마 기반 AI 콘텐츠 표시 메인 컴포넌트
+    SPEC-DASH-03 요구사항 구현
+    """
+    st.markdown("## 🤖 AI 생성 콘텐츠")
+    
+    # AI 콘텐츠 추출
+    ai_content = extract_ai_content_from_json_schema(candidate_data)
+    
+    # 데이터 검증
+    has_content = any([
+        ai_content.get('recommended_titles'),
+        ai_content.get('recommended_hashtags'),
+        ai_content.get('summary_for_caption'),
+        ai_content.get('hook_sentence')
+    ])
+    
+    if not has_content:
+        render_empty_state()
+        return
+    
+    # 소스 정보 표시
+    if 'source_info' in candidate_data:
+        source_info = candidate_data['source_info']
+        st.info(f"""
+        🎬 **소스 정보**  
+        연예인: {source_info.get('celebrity_name', 'N/A')} | 
+        채널: {source_info.get('channel_name', 'N/A')} | 
+        영상: {source_info.get('video_title', 'N/A')[:50]}...
+        """)
+    
+    # 탭 구성
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📝 제목", "#️⃣ 해시태그", "📖 캡션", "🎣 후크", "ℹ️ 추가정보"
+    ])
+    
+    with tab1:
+        render_ai_titles_section(ai_content)
+    
+    with tab2:
+        render_ai_hashtags_section(ai_content)
+    
+    with tab3:
+        render_ai_caption_section(ai_content)
+    
+    with tab4:
+        render_hook_sentence_section(ai_content)
+    
+    with tab5:
+        render_additional_info_section(ai_content)
+    
+    # 전체 콘텐츠 통합 복사
+    st.markdown("---")
+    st.markdown("### 🎯 통합 콘텐츠")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # 통합 콘텐츠 구성
+        titles = ai_content.get('recommended_titles', [])
+        hashtags = ai_content.get('recommended_hashtags', [])
+        caption = ai_content.get('summary_for_caption', '')
+        hook = ai_content.get('hook_sentence', '')
+        
+        complete_content = ""
+        if titles:
+            complete_content += f"제목: {titles[0]}\n\n"
+        if hook:
+            complete_content += f"후크: {hook}\n\n"
+        if caption:
+            complete_content += f"캡션:\n{caption}\n\n"
+        if hashtags:
+            complete_content += f"해시태그: {' '.join(hashtags)}"
+        
+        st.text_area("완성된 콘텐츠 미리보기", value=complete_content, height=200, disabled=True)
+    
+    with col2:
+        st.markdown("**통합 액션**")
+        
+        if st.button("📋 전체 복사", key="copy_complete_content", use_container_width=True, type="primary"):
+            copy_to_clipboard_with_feedback(complete_content, "전체 콘텐츠")
+            st.balloons()  # 성공 피드백
 
 def generate_ai_content(product_data):
     """제품 데이터를 기반으로 AI 콘텐츠 생성"""
@@ -446,15 +726,117 @@ def render_ai_content_display(product_data):
             st.session_state.saved_content = {}
             st.rerun()
 
+# 모바일 환경에서의 복사 기능 최적화
+def render_mobile_optimized_copy_section() -> None:
+    """모바일 터치 인터페이스 최적화"""
+    if st.session_state.get('is_mobile', False):
+        st.markdown("""
+        <style>
+        .stButton > button {
+            height: 3rem;
+            font-size: 1.1rem;
+            border-radius: 0.5rem;
+        }
+        .mobile-copy-zone {
+            padding: 1rem;
+            background-color: #f0f2f6;
+            border-radius: 0.5rem;
+            margin: 0.5rem 0;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+def add_mobile_detection_script() -> None:
+    """모바일 환경 감지 스크립트 추가"""
+    st.markdown("""
+    <script>
+    // 모바일 환경 감지
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+        // Streamlit session state에 모바일 정보 전달
+        const stateEvent = new CustomEvent('streamlit:setState', {
+            detail: { is_mobile: true }
+        });
+        window.dispatchEvent(stateEvent);
+    }
+    </script>
+    """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
-    # 테스트용 샘플 데이터
-    sample_product = {
+    # PRD JSON 스키마 기반 테스트 데이터
+    sample_candidate_data = {
+        "source_info": {
+            "celebrity_name": "강민경",
+            "channel_name": "걍밍경",
+            "video_title": "파리 출장 다녀왔습니다 VLOG",
+            "video_url": "https://www.youtube.com/watch?v=...",
+            "upload_date": "2025-06-22"
+        },
+        "candidate_info": {
+            "product_name_ai": "아비에무아 숄더백 (베이지)",
+            "product_name_manual": None,
+            "clip_start_time": 315,
+            "clip_end_time": 340,
+            "category_path": ["패션잡화", "여성가방", "숄더백"],
+            "features": ["수납이 넉넉해요", "가죽이 부드러워요"],
+            "score_details": {
+                "total": 88,
+                "sentiment_score": 0.9,
+                "endorsement_score": 0.85,
+                "influencer_score": 0.9
+            },
+            "hook_sentence": "강민경이 '이것만 쓴다'고 말한 바로 그 숄더백?",
+            "summary_for_caption": "사복 장인 강민경 님의 데일리백 정보! 넉넉한 수납과 부드러운 가죽이 특징인 아비에무아 숄더백이라고 해요. 어떤 옷에나 잘 어울려서 매일 손이 가는 찐 애정템이라고 하네요.",
+            "target_audience": ["20대 후반 여성", "30대 직장인", "미니멀룩 선호자"],
+            "price_point": "프리미엄",
+            "endorsement_type": "습관적 사용",
+            "recommended_titles": [
+                "요즘 강민경이 매일 드는 '그 가방' 정보 (바로가기)",
+                "사복 장인 강민경의 찐 애정템! 아비에무아 숄더백",
+                "여름 데일리백 고민 끝! 강민경 PICK 가방 추천"
+            ],
+            "recommended_hashtags": [
+                "#강민경",
+                "#걍밍경", 
+                "#강민경패션",
+                "#아비에무아",
+                "#숄더백추천",
+                "#여름가방",
+                "#데일리백",
+                "#연예인패션"
+            ]
+        },
+        "monetization_info": {
+            "is_coupang_product": True,
+            "coupang_url_ai": "https://link.coupang.com/...",
+            "coupang_url_manual": None
+        },
+        "status_info": {
+            "current_status": "needs_review",
+            "is_ppl": False,
+            "ppl_confidence": 0.1
+        }
+    }
+    
+    # 모바일 감지 스크립트 추가
+    add_mobile_detection_script()
+    
+    # 메인 컴포넌트 테스트
+    st.title("🧪 AI 콘텐츠 표시 컴포넌트 테스트")
+    
+    render_ai_content_display_component(sample_candidate_data)
+    
+    # 레거시 테스트 (기존 구조 호환성)
+    st.markdown("---")
+    st.markdown("## 🔄 레거시 구조 테스트")
+    
+    legacy_product = {
         "id": "PROD_001",
-        "제품명": "히알루론산 세럼 - 프리미엄",
+        "제품명": "히알루론산 세럼 - 프리미엄", 
         "채널명": "홍지윤 Yoon",
         "카테고리": "스킨케어",
         "매력도_점수": 85.3,
         "예상_가격": "45,000원"
     }
     
-    render_ai_content_display(sample_product)
+    render_ai_content_display(legacy_product)

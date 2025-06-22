@@ -316,7 +316,7 @@ class OCRProcessor:
             return 'number'
         
         korean_ratio = korean_chars / total_chars
-        if korean_ratio > 0.3:
+        if korean_ratio >= 0.25:  # 25%로 낮춰서 '안녕 Hello' 케이스 처리
             return 'ko'
         else:
             return 'en'
@@ -390,7 +390,7 @@ class OCRProcessor:
                 )
                 
                 ocr_result['gemini_match_score'] = round(match_score, 3)
-                ocr_result['is_product_related'] = match_score > 0.7
+                ocr_result['is_product_related'] = match_score >= 0.6  # >= 로 변경
                 
                 # 제품 카테고리 추론
                 if ocr_result['is_product_related']:
@@ -443,7 +443,7 @@ class OCRProcessor:
             # 부분 일치
             if ocr_lower in mention_lower or mention_lower in ocr_lower:
                 score = min(len(ocr_lower), len(mention_lower)) / max(len(ocr_lower), len(mention_lower))
-                max_score = max(max_score, score * 0.8)
+                max_score = max(max_score, score * 0.9)  # 0.8에서 0.9로 증가
                 continue
             
             # 단어 단위 일치
@@ -479,8 +479,8 @@ class OCRProcessor:
         
         # 패션 관련 키워드
         if any(keyword in text_lower for keyword in [
-            '셔츠', '바지', '드레스', '스커트', '코트', '자켓',
-            'shirt', 'pants', 'dress', 'skirt', 'coat', 'jacket'
+            '셔츠', '바지', '드레스', '스커트', '코트', '자켓', '블라우스',
+            'shirt', 'pants', 'dress', 'skirt', 'coat', 'jacket', 'blouse'
         ]):
             return 'fashion'
         

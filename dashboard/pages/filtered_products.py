@@ -1,6 +1,7 @@
 """
-S03-003: 수익화 필터링 목록 대시보드
-쿠팡 검색 실패 제품 관리 및 수동 링크 연결
+T09_S01_M02: 수익화 필터링 목록 대시보드
+쿠팡 검색 실패 제품 관리 및 수동 링크 연결 기능
+PRD SPEC-DASH-05: 상태 기반 워크플로우 관리 구현
 """
 
 import streamlit as st
@@ -9,6 +10,66 @@ import numpy as np
 from datetime import datetime, timedelta
 import json
 import re
+import sys
+from pathlib import Path
+
+# 프로젝트 루트 경로 추가
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+try:
+    from dashboard.utils.database_manager import get_database_manager
+    from dashboard.components.workflow_state_manager import WorkflowStateManager
+except ImportError:
+    get_database_manager = None
+    WorkflowStateManager = None
+
+def load_filtered_products_from_db():
+    """데이터베이스에서 필터링된 제품 데이터 로드"""
+    if get_database_manager is None:
+        return create_filtered_sample_data()
+    
+    try:
+        db_manager = get_database_manager()
+        # filtered_no_coupang 상태인 제품들 조회
+        candidates = db_manager.get_candidates_by_status("filtered_no_coupang", limit=500)
+        
+        if not candidates:
+            return create_filtered_sample_data()
+        
+        # 데이터베이스 형식을 UI 형식으로 변환
+        filtered_data = []
+        for candidate in candidates:
+            candidate_info = candidate.get('candidate_info', {})
+            monetization_info = candidate.get('monetization_info', {})
+            status_info = candidate.get('status_info', {})
+            source_info = candidate.get('source_info', {})
+            
+            filtered_data.append({
+                "id": candidate.get('id', ''),
+                "제품명": candidate_info.get('product_name_ai', '알 수 없는 제품'),
+                "카테고리": candidate_info.get('category_path', ['기타'])[0] if candidate_info.get('category_path') else '기타',
+                "채널명": source_info.get('channel_name', '알 수 없는 채널'),
+                "영상_제목": source_info.get('video_title', '제목 없음'),
+                "필터링_사유": "쿠팡 API 검색 결과 없음",
+                "매력도_점수": candidate_info.get('score_details', {}).get('total', 0),
+                "감지_날짜": candidate.get('created_at', '').split(' ')[0] if candidate.get('created_at') else '',
+                "상태": "검색실패",
+                "타임스탬프": f"{candidate_info.get('clip_start_time', 0)//60:02d}:{candidate_info.get('clip_start_time', 0)%60:02d} - {candidate_info.get('clip_end_time', 0)//60:02d}:{candidate_info.get('clip_end_time', 0)%60:02d}",
+                "조회수": "N/A",
+                "수동_링크": monetization_info.get('coupang_url_manual', ''),
+                "검색_키워드": "",
+                "메모": "",
+                "처리자": "시스템",
+                "처리_일시": candidate.get('created_at', ''),
+                "youtube_url": source_info.get('video_url', '')
+            })
+            
+        return pd.DataFrame(filtered_data)
+        
+    except Exception as e:
+        st.error(f"데이터베이스 연결 오류: {e}")
+        return create_filtered_sample_data()
 
 def create_filtered_sample_data():
     """필터링된 제품 샘플 데이터 생성"""
@@ -134,6 +195,73 @@ def render_status_badge_filtered(status):
     }
     return f"{colors.get(status, '⚪')} {status}"
 
+def update_product_status(product_id, new_status, manual_link="", reason=""):
+    """데이터베이스에서 제품 상태 업데이트"""
+    if get_database_manager is None:
+        return True  # 샘플 데이터일 때는 성공으로 간주
+    
+    try:
+        db_manager = get_database_manager()
+        
+        # 제품 정보 조회
+        candidate = db_manager.get_candidate(product_id)
+        if not candidate:
+            return False
+        
+        # 상태별 처리
+        if new_status == "needs_review":
+            # 메인 목록으로 복원 - 수동 링크 연결된 경우
+            if manual_link:
+                candidate['monetization_info']['coupang_url_manual'] = manual_link
+                candidate['monetization_info']['is_coupang_product'] = True
+            
+            # 상태 변경
+            success = db_manager.update_candidate_status(
+                product_id, 
+                "needs_review", 
+                reason or "수동 링크 연결 또는 복원 처리",
+                "dashboard_operator"
+            )
+            
+            if success and manual_link:
+                # 전체 후보 데이터 업데이트
+                db_manager.save_candidate(candidate)
+            
+            return success
+            
+        elif new_status == "rejected":
+            # 최종 제외 처리
+            return db_manager.update_candidate_status(
+                product_id,
+                "rejected", 
+                reason or "수동 제외 처리",
+                "dashboard_operator"
+            )
+        
+        return False
+        
+    except Exception as e:
+        st.error(f"데이터베이스 업데이트 오류: {e}")
+        return False
+
+def validate_coupang_url(url):
+    """쿠팡 파트너스 URL 검증"""
+    if not url:
+        return False, "URL을 입력해주세요."
+    
+    # 쿠팡 파트너스 URL 패턴 검증
+    coupang_patterns = [
+        r'https?://coupa\.ng/[a-zA-Z0-9]+',
+        r'https?://link\.coupang\.com/[a-zA-Z0-9/]+',
+        r'https?://.*\.coupang\.com/.*'
+    ]
+    
+    for pattern in coupang_patterns:
+        if re.match(pattern, url):
+            return True, "유효한 쿠팡 URL입니다."
+    
+    return False, "올바른 쿠팡 파트너스 링크 형식이 아닙니다. (예: https://coupa.ng/... 또는 https://link.coupang.com/...)"
+
 def render_manual_link_form(product_id, current_link=""):
     """수동 링크 연결 폼"""
     with st.form(f"link_form_{product_id}"):
@@ -145,7 +273,7 @@ def render_manual_link_form(product_id, current_link=""):
             manual_link = st.text_input(
                 "쿠팡 파트너스 링크",
                 value=current_link,
-                placeholder="https://coupa.ng/..."
+                placeholder="https://coupa.ng/... 또는 https://link.coupang.com/..."
             )
             
             keywords = st.text_input(
@@ -162,13 +290,13 @@ def render_manual_link_form(product_id, current_link=""):
             st.markdown("**🔍 보조 검색**")
             
             if st.form_submit_button("Google 검색", use_container_width=True):
-                st.info("Google 검색 기능은 S03-006에서 구현됩니다.")
+                st.info("Google 검색 기능은 향후 구현됩니다.")
             
             if st.form_submit_button("네이버 검색", use_container_width=True):
-                st.info("네이버 검색 기능은 S03-006에서 구현됩니다.")
+                st.info("네이버 검색 기능은 향후 구현됩니다.")
             
             if st.form_submit_button("쿠팡 직접 검색", use_container_width=True):
-                st.info("쿠팡 검색 기능은 S03-006에서 구현됩니다.")
+                st.info("쿠팡 검색 기능은 향후 구현됩니다.")
         
         col1, col2, col3 = st.columns(3)
         
@@ -179,21 +307,41 @@ def render_manual_link_form(product_id, current_link=""):
         with col3:
             submit_exclude = st.form_submit_button("❌ 최종 제외")
         
+        # 액션 처리
         if submit_connect and manual_link:
-            if re.match(r'https?://coupa\.ng/[a-zA-Z0-9]+', manual_link):
-                st.success(f"✅ 링크가 연결되었습니다! 메인 목록으로 복원됩니다.")
-                st.balloons()
-                return "연결완료", manual_link, keywords, memo
+            is_valid, message = validate_coupang_url(manual_link)
+            if is_valid:
+                if update_product_status(product_id, "needs_review", manual_link, "수동 링크 연결"):
+                    st.success(f"✅ 링크가 연결되었습니다! 메인 목록으로 복원됩니다.")
+                    st.balloons()
+                    # 세션 상태 새로고침을 위해 데이터 삭제
+                    if 'filtered_data' in st.session_state:
+                        del st.session_state.filtered_data
+                    return "연결완료", manual_link, keywords, memo
+                else:
+                    st.error("데이터베이스 업데이트에 실패했습니다.")
             else:
-                st.error("올바른 쿠팡 파트너스 링크 형식이 아닙니다. (https://coupa.ng/...)")
+                st.error(message)
         
         elif submit_restore:
-            st.success("🔄 메인 목록으로 복원되었습니다!")
-            return "복원완료", "", keywords, memo
+            if update_product_status(product_id, "needs_review", "", "메인 목록 복원"):
+                st.success("🔄 메인 목록으로 복원되었습니다!")
+                # 세션 상태 새로고침을 위해 데이터 삭제
+                if 'filtered_data' in st.session_state:
+                    del st.session_state.filtered_data
+                return "복원완료", "", keywords, memo
+            else:
+                st.error("복원 처리에 실패했습니다.")
         
         elif submit_exclude:
-            st.warning("❌ 최종 제외 처리되었습니다.")
-            return "최종제외", "", keywords, memo
+            if update_product_status(product_id, "rejected", "", "수동 제외 처리"):
+                st.warning("❌ 최종 제외 처리되었습니다.")
+                # 세션 상태 새로고침을 위해 데이터 삭제
+                if 'filtered_data' in st.session_state:
+                    del st.session_state.filtered_data
+                return "최종제외", "", keywords, memo
+            else:
+                st.error("제외 처리에 실패했습니다.")
         
         elif submit_connect and not manual_link:
             st.error("링크를 입력해주세요.")
@@ -207,7 +355,7 @@ def render_filtered_products():
     # 데이터 로드
     if 'filtered_data' not in st.session_state:
         with st.spinner("필터링된 데이터를 불러오는 중..."):
-            st.session_state.filtered_data = create_filtered_sample_data()
+            st.session_state.filtered_data = load_filtered_products_from_db()
     
     df = st.session_state.filtered_data
     

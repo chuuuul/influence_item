@@ -8,6 +8,19 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import json
+import sys
+from pathlib import Path
+
+# 프로젝트 루트 경로 추가
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+try:
+    from dashboard.components.workflow_state_manager import WorkflowStateManager
+    from dashboard.utils.database_manager import get_database_manager
+except ImportError:
+    WorkflowStateManager = None
+    get_database_manager = None
 
 def create_sample_data():
     """샘플 데이터 생성 (실제로는 데이터베이스에서 가져와야 함)"""
@@ -79,9 +92,9 @@ def create_sample_data():
         usage_evidence = np.random.uniform(0.4, 0.9)
         influencer_trust = np.random.uniform(0.7, 1.0)
         
-        # 상태 생성
-        statuses = ["대기중", "검토중", "승인됨", "반려됨", "수정필요"]
-        weights = [0.3, 0.2, 0.25, 0.15, 0.1]  # 대기중과 승인됨에 가중치
+        # 상태 생성 (PRD SPEC-DASH-05 기준)
+        statuses = ["needs_review", "approved", "rejected", "under_revision", "published"]
+        weights = [0.4, 0.25, 0.15, 0.1, 0.1]  # needs_review에 가중치
         status = np.random.choice(statuses, p=weights)
         
         # 타임스탬프 생성
@@ -140,15 +153,21 @@ def apply_filters(df, search_term, category_filter, status_filter, score_range):
     return filtered_df
 
 def render_status_badge(status):
-    """상태 배지 렌더링"""
-    colors = {
-        "대기중": "🟡",
-        "검토중": "🔵", 
-        "승인됨": "🟢",
-        "반려됨": "🔴",
-        "수정필요": "🟠"
-    }
-    return f"{colors.get(status, '⚪')} {status}"
+    """상태 배지 렌더링 (워크플로우 상태 관리 시스템 연동)"""
+    if WorkflowStateManager:
+        manager = WorkflowStateManager()
+        return manager.render_status_badge(status)
+    else:
+        # 폴백: 기본 상태 표시
+        colors = {
+            "needs_review": "🟡 검토 대기",
+            "approved": "🟢 승인됨",
+            "rejected": "🔴 반려됨",
+            "under_revision": "🟠 수정중",
+            "published": "🚀 업로드 완료",
+            "filtered_no_coupang": "🔗 수익화 불가"
+        }
+        return colors.get(status, f"⚪ {status}")
 
 def render_monetizable_candidates():
     """수익화 가능 후보 페이지 렌더링"""
