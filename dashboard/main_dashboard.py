@@ -23,6 +23,7 @@ try:
     from dashboard.pages.filtered_products import render_filtered_products
     from dashboard.pages.ai_content_generator import render_ai_content_generator
     from dashboard.pages.api_usage_tracking import main as render_api_usage_tracking
+    from dashboard.pages.budget_management import main as render_budget_management
     from dashboard.components.detail_view import render_detail_view
     from dashboard.utils.performance_monitor import (
         get_performance_monitor, 
@@ -35,6 +36,7 @@ except ImportError:
     render_filtered_products = None
     render_ai_content_generator = None
     render_api_usage_tracking = None
+    render_budget_management = None
     render_detail_view = None
     get_performance_monitor = None
     optimize_streamlit_config = None
@@ -462,6 +464,7 @@ def render_sidebar():
         },
         "📊 관리 및 설정": {
             "💰 API 사용량 추적": "api_usage_tracking",
+            "💸 예산 관리": "budget_management",
             "📈 통계 및 리포트": "statistics",
             "⚙️ 시스템 설정": "settings"
         }
@@ -689,6 +692,11 @@ def main():
             render_api_usage_tracking()
         else:
             st.error("API 사용량 추적 페이지를 로드할 수 없습니다.")
+    elif current_page == 'budget_management':
+        if render_budget_management:
+            render_budget_management()
+        else:
+            st.error("예산 관리 페이지를 로드할 수 없습니다.")
     elif current_page == 'detail_view':
         if render_detail_view and 'selected_product' in st.session_state:
             render_detail_view(st.session_state.selected_product)

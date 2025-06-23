@@ -101,6 +101,14 @@ class Config:
     COUPANG_SEARCH_LIMIT: int = int(os.getenv("COUPANG_SEARCH_LIMIT", "50"))
     COUPANG_CACHE_TTL: int = int(os.getenv("COUPANG_CACHE_TTL", "3600"))  # 1시간 캐시
     
+    # 예산 관리 설정 (PRD 기준)
+    MONTHLY_BUDGET: float = float(os.getenv("MONTHLY_BUDGET", "15000.0"))  # 월 예산 15,000원
+    BUDGET_WARNING_THRESHOLD: float = float(os.getenv("BUDGET_WARNING_THRESHOLD", "0.70"))  # 70% 경고
+    BUDGET_ALERT_THRESHOLD: float = float(os.getenv("BUDGET_ALERT_THRESHOLD", "0.80"))  # 80% 주의
+    BUDGET_CRITICAL_THRESHOLD: float = float(os.getenv("BUDGET_CRITICAL_THRESHOLD", "0.90"))  # 90% 위험
+    BUDGET_EMERGENCY_THRESHOLD: float = float(os.getenv("BUDGET_EMERGENCY_THRESHOLD", "0.95"))  # 95% 비상
+    BUDGET_STOP_THRESHOLD: float = float(os.getenv("BUDGET_STOP_THRESHOLD", "1.00"))  # 100% 중단
+    
     # YouTube 다운로드 설정
     YT_DLP_OPTS: dict = {
         'format': 'bestaudio/best',
