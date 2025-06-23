@@ -47,6 +47,8 @@ dist/
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 *.so
 .Python
 build/
@@ -64,3 +66,25 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Database files
+*.db
+*.sqlite3
+influence_item_usage.db
+
+# Backup files
+*.bak
+
+# Temporary files and logs
+*.tmp
+*.jsonl
+error_log.jsonl
+
+# Test outputs
+test_*.py
+
+# Summary files
+yolo_*.md
+
+# Product images (temporary data)
+temp/product_images/
