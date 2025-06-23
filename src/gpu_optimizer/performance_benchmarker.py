@@ -525,6 +525,81 @@ class PerformanceBenchmarker:
             recommendations.append("시스템이 안정적으로 동작하고 있습니다.")
         
         return recommendations
+    
+    def benchmark_whisper_model(
+        self,
+        whisper_processor,
+        audio_files: List[str],
+        iterations: int = 3
+    ) -> BenchmarkResult:
+        """Whisper 모델 성능 벤치마킹"""
+        def whisper_process_fn(audio_batch):
+            results = []
+            for audio_file in audio_batch:
+                try:
+                    result = whisper_processor.transcribe_from_file(audio_file)
+                    results.append(result)
+                except Exception as e:
+                    self.logger.warning(f"Whisper 처리 실패: {str(e)}")
+                    results.append({"error": str(e)})
+            return results
+        
+        return self.benchmark_function(
+            whisper_process_fn,
+            audio_files,
+            "Whisper_Audio_Transcription",
+            iterations
+        )
+    
+    def benchmark_yolo_model(
+        self,
+        object_detector,
+        image_files: List[str],
+        iterations: int = 3
+    ) -> BenchmarkResult:
+        """YOLO 모델 성능 벤치마킹"""
+        def yolo_process_fn(image_batch):
+            results = []
+            for image_file in image_batch:
+                try:
+                    result = object_detector.detect_objects(image_file)
+                    results.append(result)
+                except Exception as e:
+                    self.logger.warning(f"YOLO 처리 실패: {str(e)}")
+                    results.append({"error": str(e)})
+            return results
+        
+        return self.benchmark_function(
+            yolo_process_fn,
+            image_files,
+            "YOLO_Object_Detection",
+            iterations
+        )
+    
+    def benchmark_ocr_model(
+        self,
+        ocr_processor,
+        image_files: List[str],
+        iterations: int = 3
+    ) -> BenchmarkResult:
+        """OCR 모델 성능 벤치마킹"""
+        def ocr_process_fn(image_batch):
+            results = []
+            for image_file in image_batch:
+                try:
+                    result = ocr_processor.extract_text_from_frame(image_file)
+                    results.append(result)
+                except Exception as e:
+                    self.logger.warning(f"OCR 처리 실패: {str(e)}")
+                    results.append({"error": str(e)})
+            return results
+        
+        return self.benchmark_function(
+            ocr_process_fn,
+            image_files,
+            "EasyOCR_Text_Extraction",
+            iterations
+        )
 
 
 def create_test_process_function() -> Callable:

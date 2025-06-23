@@ -24,8 +24,12 @@ def send_yolo_completion_email():
         with open('/Users/chul/Documents/claude/influence_item/yolo_t10_completion_report.md', 'r', encoding='utf-8') as f:
             report_content = f.read()
     except FileNotFoundError:
-        print("YOLO 완료 보고서 파일을 찾을 수 없습니다.")
-        return False
+        try:
+            with open('/Users/chul/Documents/claude/influence_item/yolo_completion_report.md', 'r', encoding='utf-8') as f:
+                report_content = f.read()
+        except FileNotFoundError:
+            print("YOLO 완료 보고서 파일을 찾을 수 없습니다.")
+            return False
     
     # 이메일 내용 구성
     subject = "influence_item yolo 작업완료 (by memory)"
@@ -67,7 +71,7 @@ def send_yolo_completion_email():
     
     # 이메일 발송 파라미터
     params = {
-        "from": "Claude YOLO <noreply@claudeai.dev>",
+        "from": "Claude YOLO <onboarding@resend.dev>",
         "to": ["rlacjf310@gmail.com"],
         "subject": subject,
         "html": html_content,

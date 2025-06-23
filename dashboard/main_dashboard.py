@@ -6,7 +6,12 @@ S03-001: Streamlit 기반 관리 대시보드 기본 구조
 import streamlit as st
 import sys
 import os
+import time
+import psutil
+import gc
 from pathlib import Path
+from functools import lru_cache
+from typing import Dict, List, Any
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent.parent
@@ -18,11 +23,65 @@ try:
     from dashboard.pages.filtered_products import render_filtered_products
     from dashboard.pages.ai_content_generator import render_ai_content_generator
     from dashboard.components.detail_view import render_detail_view
+    from dashboard.utils.performance_monitor import (
+        get_performance_monitor, 
+        optimize_streamlit_config,
+        measure_page_load_time,
+        check_performance_thresholds
+    )
 except ImportError:
     render_monetizable_candidates = None
     render_filtered_products = None
     render_ai_content_generator = None
     render_detail_view = None
+    get_performance_monitor = None
+    optimize_streamlit_config = None
+    measure_page_load_time = None
+    check_performance_thresholds = None
+
+@st.cache_resource
+def get_system_info() -> Dict[str, Any]:
+    """시스템 정보 캐싱"""
+    return {
+        "version": "v1.0.0",
+        "status": "🟢 정상 운영",
+        "last_update": "방금 전"
+    }
+
+@st.cache_data(ttl=300)  # 5분 캐시
+def get_dashboard_metrics() -> Dict[str, Any]:
+    """대시보드 메트릭 캐싱"""
+    # 실제로는 데이터베이스에서 가져와야 함
+    return {
+        "total_videos": 31,
+        "monetizable_candidates": 23,
+        "filtered_items": 8,
+        "approved_items": 12,
+        "today_videos": 5,
+        "new_candidates": 3,
+        "resolved_filtered": -2,
+        "today_approved": 4
+    }
+
+@st.cache_data(ttl=60)  # 1분 캐시
+def get_recent_activities() -> List[Dict[str, str]]:
+    """최근 활동 데이터 캐싱"""
+    return [
+        {"time": "2분 전", "activity": "새로운 영상 분석 완료", "status": "completed"},
+        {"time": "15분 전", "activity": "제품 후보 3개 승인됨", "status": "completed"},
+        {"time": "32분 전", "activity": "영상 분석 시작", "status": "processing"},
+        {"time": "1시간 전", "activity": "쿠팡 API 연동 확인", "status": "completed"},
+    ]
+
+@st.cache_data(ttl=300)  # 5분 캐시
+def get_system_status() -> Dict[str, int]:
+    """시스템 상태 정보 캐싱"""
+    return {
+        "분석 대기": 5,
+        "처리 중": 2,
+        "완료": 23,
+        "오류": 1
+    }
 
 def initialize_app():
     """앱 초기 설정"""
@@ -91,7 +150,7 @@ def initialize_app():
     # JavaScript를 페이지에 삽입
     st.components.v1.html(keyboard_shortcuts, height=0)
     
-    # 커스텀 CSS 스타일
+    # 커스텀 CSS 스타일 (성능 최적화 및 반응형)
     st.markdown("""
     <style>
     /* 메인 앱 스타일 */
@@ -242,7 +301,50 @@ def initialize_app():
         text-decoration: underline;
     }
     
-    /* 반응형 디자인 */
+    /* 성능 최적화 */
+    * {
+        box-sizing: border-box;
+    }
+    
+    .main .block-container {
+        will-change: transform;
+    }
+    
+    /* 이미지 최적화 */
+    img {
+        max-width: 100%;
+        height: auto;
+        loading: lazy;
+    }
+    
+    /* 애니메이션 최적화 */
+    .metric-card, .activity-card, .stButton > button {
+        transform: translateZ(0);
+        backface-visibility: hidden;
+    }
+    
+    /* 반응형 디자인 - 태블릿 (768px - 1023px) */
+    @media (min-width: 768px) and (max-width: 1023px) {
+        .main .block-container {
+            max-width: 95%;
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        
+        .main-header h1 {
+            font-size: 2rem;
+        }
+        
+        .main-header p {
+            font-size: 1rem;
+        }
+        
+        .sidebar .sidebar-content {
+            padding: 0.75rem;
+        }
+    }
+    
+    /* 반응형 디자인 - 모바일 (768px 이하) */
     @media (max-width: 768px) {
         .main-header h1 {
             font-size: 1.8rem;
@@ -266,6 +368,7 @@ def initialize_app():
         }
     }
     
+    /* 작은 모바일 디바이스 (480px 이하) */
     @media (max-width: 480px) {
         .main-header {
             padding: 1.5rem 1rem;
@@ -277,6 +380,22 @@ def initialize_app():
         
         .sidebar .sidebar-content {
             padding: 0.5rem;
+        }
+        
+        .stButton > button {
+            font-size: 0.8rem;
+            padding: 0.4rem 0.8rem;
+        }
+    }
+    
+    /* 데스크톱 (1024px 이상) */
+    @media (min-width: 1024px) {
+        .main .block-container {
+            max-width: 1400px;
+        }
+        
+        .sidebar .sidebar-content {
+            padding: 1rem;
         }
     }
     </style>
@@ -380,63 +499,60 @@ def render_sidebar():
             del st.session_state.selected_product
         st.rerun()
     
-    # 시스템 상태 정보
+    # 시스템 상태 정보 (캐시된 데이터 사용)
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 시스템 상태")
     
-    # 임시 상태 정보 (실제로는 데이터베이스에서 가져와야 함)
-    status_info = {
-        "분석 대기": 5,
-        "처리 중": 2,
-        "완료": 23,
-        "오류": 1
-    }
-    
+    status_info = get_system_status()
     for status, count in status_info.items():
         st.sidebar.metric(status, count)
     
-    # 시스템 정보
+    # 시스템 정보 (캐시된 데이터 사용)
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ℹ️ 시스템 정보")
+    system_info = get_system_info()
     st.sidebar.info(f"""
-    - **버전**: v1.0.0
-    - **상태**: 🟢 정상 운영
-    - **마지막 업데이트**: 방금 전
+    - **버전**: {system_info["version"]}
+    - **상태**: {system_info["status"]}
+    - **마지막 업데이트**: {system_info["last_update"]}
     """)
 
 def render_home_page():
-    """홈 페이지 렌더링"""
+    """홈 페이지 렌더링 (성능 최적화)"""
     st.markdown("## 📊 대시보드 개요")
     
-    # 메트릭 카드들
+    # 캐시된 메트릭 데이터 로드
+    metrics = get_dashboard_metrics()
+    
+    # 메트릭 카드들 - 반응형 레이아웃
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
             label="📹 총 분석 영상", 
-            value="31", 
-            delta="5 (오늘)"
+            value=str(metrics["total_videos"]), 
+            delta=f"{metrics['today_videos']} (오늘)"
         )
     
     with col2:
         st.metric(
             label="💰 수익화 후보",
-            value="23",
-            delta="3 (신규)"
+            value=str(metrics["monetizable_candidates"]),
+            delta=f"{metrics['new_candidates']} (신규)"
         )
     
     with col3:
         st.metric(
             label="🔍 필터링 항목",
-            value="8",
-            delta="-2 (해결)"
+            value=str(metrics["filtered_items"]),
+            delta=f"{metrics['resolved_filtered']} (해결)"
         )
     
     with col4:
         st.metric(
             label="✅ 승인 완료",
-            value="12",
-            delta="4 (오늘)"
+            value=str(metrics["approved_items"]),
+            delta=f"{metrics['today_approved']} (오늘)"
         )
     
     # 최근 활동 및 알림
@@ -445,12 +561,8 @@ def render_home_page():
     
     with col1:
         st.markdown("### 📋 최근 활동")
-        recent_activities = [
-            {"time": "2분 전", "activity": "새로운 영상 분석 완료", "status": "completed"},
-            {"time": "15분 전", "activity": "제품 후보 3개 승인됨", "status": "completed"},
-            {"time": "32분 전", "activity": "영상 분석 시작", "status": "processing"},
-            {"time": "1시간 전", "activity": "쿠팡 API 연동 확인", "status": "completed"},
-        ]
+        # 캐시된 활동 데이터 사용
+        recent_activities = get_recent_activities()
         
         for activity in recent_activities:
             status_class = f"status-{activity['status']}"
@@ -527,7 +639,15 @@ def render_placeholder_page(page_name: str):
         """)
 
 def main():
-    """메인 애플리케이션"""
+    """메인 애플리케이션 (성능 최적화)"""
+    # 성능 모니터링 시작
+    if measure_page_load_time:
+        end_measurement = measure_page_load_time("main_dashboard")
+    
+    # 성능 최적화 설정
+    if optimize_streamlit_config:
+        optimize_streamlit_config()
+    
     # 앱 초기화
     initialize_app()
     
@@ -578,6 +698,20 @@ def main():
         <small>Powered by Streamlit • Gemini AI • OpenAI Whisper • YOLOv8</small>
     </div>
     """, unsafe_allow_html=True)
+    
+    # 성능 측정 완료
+    if measure_page_load_time and 'end_measurement' in locals():
+        load_time = end_measurement()
+        
+        # 성능 경고 체크
+        if check_performance_thresholds:
+            thresholds = check_performance_thresholds()
+            if not all(thresholds.values()):
+                st.sidebar.warning("⚠️ 성능 최적화가 필요합니다.")
+        
+        # 개발 모드에서 성능 정보 표시
+        if st.sidebar.checkbox("🔧 성능 정보 표시", help="개발/디버깅용"):
+            st.sidebar.metric("페이지 로딩", f"{load_time:.1f}ms")
 
 if __name__ == "__main__":
     main()

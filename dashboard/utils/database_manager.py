@@ -8,9 +8,12 @@ T08_S01_M02: Workflow State Management - Database Operations
 import sqlite3
 import json
 import logging
+import time
+import threading
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
+from functools import lru_cache
 import sys
 
 # 프로젝트 루트 경로 추가
@@ -21,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """데이터베이스 관리자"""
+    """데이터베이스 관리자 (성능 최적화)"""
     
     def __init__(self, db_path: str = "influence_item.db"):
         """
@@ -29,6 +32,9 @@ class DatabaseManager:
             db_path: SQLite 데이터베이스 파일 경로
         """
         self.db_path = db_path
+        self._connection_pool = {}
+        self._pool_lock = threading.Lock()
+        self._cache_timeout = 300  # 5분 캐시
         self._init_database()
         
     def _init_database(self):
@@ -77,6 +83,37 @@ class DatabaseManager:
                     )
                 """)
                 
+                # T03_S02_M02: 외부 검색 이력 테이블
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS search_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        candidate_id TEXT NOT NULL,
+                        search_engine TEXT NOT NULL,
+                        query TEXT NOT NULL,
+                        search_type TEXT NOT NULL,
+                        search_url TEXT NOT NULL,
+                        session_key TEXT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        metadata TEXT,
+                        FOREIGN KEY (candidate_id) REFERENCES candidates (id)
+                    )
+                """)
+                
+                # 검색 피드백 테이블
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS search_feedback (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        candidate_id TEXT NOT NULL,
+                        search_id INTEGER,
+                        feedback_type TEXT NOT NULL,
+                        comments TEXT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        session_key TEXT,
+                        FOREIGN KEY (candidate_id) REFERENCES candidates (id),
+                        FOREIGN KEY (search_id) REFERENCES search_history (id)
+                    )
+                """)
+                
                 # 인덱스 생성
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_candidates_status 
@@ -99,6 +136,18 @@ class DatabaseManager:
                     ON audit_logs(candidate_id)
                 """)
                 conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_history_candidate 
+                    ON search_history(candidate_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_history_timestamp 
+                    ON search_history(timestamp)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_feedback_candidate 
+                    ON search_feedback(candidate_id)
+                """)
+                conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_audit_logs_category 
                     ON audit_logs(category)
                 """)
@@ -109,6 +158,89 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             raise
+    
+    def _get_connection(self) -> sqlite3.Connection:
+        """성능 최적화된 데이터베이스 연결 획득"""
+        thread_id = threading.get_ident()
+        
+        with self._pool_lock:
+            if thread_id not in self._connection_pool:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                # 성능 최적화 설정
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA cache_size=10000")
+                conn.execute("PRAGMA temp_store=MEMORY")
+                self._connection_pool[thread_id] = conn
+                
+            return self._connection_pool[thread_id]
+    
+    @lru_cache(maxsize=100)
+    def _get_cached_status_counts(self, cache_key: str) -> Dict[str, int]:
+        """상태별 개수 캐시"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.execute("""
+                SELECT json_extract(status_info, '$.current_status') as status, COUNT(*) as count
+                FROM candidates
+                GROUP BY status
+            """)
+            
+            status_counts = {}
+            for row in cursor.fetchall():
+                status, count = row
+                status_counts[status or "unknown"] = count
+                
+            return status_counts
+        except Exception as e:
+            logger.error(f"Failed to get cached status counts: {e}")
+            return {}
+    
+    @lru_cache(maxsize=50)
+    def _get_cached_candidate_list(self, status: str, limit: int, offset: int, cache_key: str) -> List[Dict[str, Any]]:
+        """후보 목록 캐시"""
+        try:
+            conn = self._get_connection()
+            
+            if status and status != "all":
+                query = """
+                    SELECT id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at
+                    FROM candidates 
+                    WHERE json_extract(status_info, '$.current_status') = ?
+                    ORDER BY updated_at DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (status, limit, offset)
+            else:
+                query = """
+                    SELECT id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at
+                    FROM candidates 
+                    ORDER BY updated_at DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (limit, offset)
+                
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+            
+            candidates = []
+            for row in rows:
+                cid, source_info, candidate_info, monetization_info, status_info, created_at, updated_at = row
+                
+                candidates.append({
+                    "id": cid,
+                    "source_info": json.loads(source_info),
+                    "candidate_info": json.loads(candidate_info),
+                    "monetization_info": json.loads(monetization_info),
+                    "status_info": json.loads(status_info),
+                    "created_at": created_at,
+                    "updated_at": updated_at
+                })
+                
+            return candidates
+        except Exception as e:
+            logger.error(f"Failed to get cached candidate list: {e}")
+            return []
             
     def save_candidate(self, candidate_data: Dict[str, Any]) -> bool:
         """
@@ -125,47 +257,50 @@ class DatabaseManager:
             if not candidate_id:
                 raise ValueError("Candidate ID not found in data")
                 
-            with sqlite3.connect(self.db_path) as conn:
-                # 기존 데이터 확인
-                cursor = conn.execute("SELECT id FROM candidates WHERE id = ?", (candidate_id,))
-                exists = cursor.fetchone() is not None
+            conn = self._get_connection()
+            # 기존 데이터 확인
+            cursor = conn.execute("SELECT id FROM candidates WHERE id = ?", (candidate_id,))
+            exists = cursor.fetchone() is not None
+            
+            now = datetime.now().isoformat()
+            
+            if exists:
+                # 업데이트
+                conn.execute("""
+                    UPDATE candidates 
+                    SET source_info = ?, candidate_info = ?, monetization_info = ?, 
+                        status_info = ?, updated_at = ?
+                    WHERE id = ?
+                """, (
+                    json.dumps(candidate_data.get("source_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("candidate_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("monetization_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("status_info", {}), ensure_ascii=False),
+                    now,
+                    candidate_id
+                ))
+                logger.info(f"Updated candidate: {candidate_id}")
+            else:
+                # 신규 삽입
+                conn.execute("""
+                    INSERT INTO candidates (id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    candidate_id,
+                    json.dumps(candidate_data.get("source_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("candidate_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("monetization_info", {}), ensure_ascii=False),
+                    json.dumps(candidate_data.get("status_info", {}), ensure_ascii=False),
+                    now,
+                    now
+                ))
+                logger.info(f"Created candidate: {candidate_id}")
                 
-                now = datetime.now().isoformat()
-                
-                if exists:
-                    # 업데이트
-                    conn.execute("""
-                        UPDATE candidates 
-                        SET source_info = ?, candidate_info = ?, monetization_info = ?, 
-                            status_info = ?, updated_at = ?
-                        WHERE id = ?
-                    """, (
-                        json.dumps(candidate_data.get("source_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("candidate_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("monetization_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("status_info", {}), ensure_ascii=False),
-                        now,
-                        candidate_id
-                    ))
-                    logger.info(f"Updated candidate: {candidate_id}")
-                else:
-                    # 신규 삽입
-                    conn.execute("""
-                        INSERT INTO candidates (id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        candidate_id,
-                        json.dumps(candidate_data.get("source_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("candidate_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("monetization_info", {}), ensure_ascii=False),
-                        json.dumps(candidate_data.get("status_info", {}), ensure_ascii=False),
-                        now,
-                        now
-                    ))
-                    logger.info(f"Created candidate: {candidate_id}")
-                    
-                conn.commit()
-                return True
+            conn.commit()
+            # 캐시 무효화
+            self._get_cached_status_counts.cache_clear()
+            self._get_cached_candidate_list.cache_clear()
+            return True
                 
         except Exception as e:
             logger.error(f"Failed to save candidate: {e}")
@@ -214,7 +349,7 @@ class DatabaseManager:
         offset: int = 0
     ) -> List[Dict[str, Any]]:
         """
-        상태별 후보 목록 조회
+        상태별 후보 목록 조회 (캐시 사용)
         
         Args:
             status: 조회할 상태 (None이면 전체)
@@ -225,43 +360,11 @@ class DatabaseManager:
             후보 데이터 목록
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                if status:
-                    query = """
-                        SELECT id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at
-                        FROM candidates 
-                        WHERE json_extract(status_info, '$.current_status') = ?
-                        ORDER BY updated_at DESC
-                        LIMIT ? OFFSET ?
-                    """
-                    params = (status, limit, offset)
-                else:
-                    query = """
-                        SELECT id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at
-                        FROM candidates 
-                        ORDER BY updated_at DESC
-                        LIMIT ? OFFSET ?
-                    """
-                    params = (limit, offset)
-                    
-                cursor = conn.execute(query, params)
-                rows = cursor.fetchall()
-                
-                candidates = []
-                for row in rows:
-                    cid, source_info, candidate_info, monetization_info, status_info, created_at, updated_at = row
-                    
-                    candidates.append({
-                        "id": cid,
-                        "source_info": json.loads(source_info),
-                        "candidate_info": json.loads(candidate_info),
-                        "monetization_info": json.loads(monetization_info),
-                        "status_info": json.loads(status_info),
-                        "created_at": created_at,
-                        "updated_at": updated_at
-                    })
-                    
-                return candidates
+            # 캐시 키 생성 (5분마다 갱신)
+            cache_key = f"{int(time.time() // self._cache_timeout)}"
+            status_key = status or "all"
+            
+            return self._get_cached_candidate_list(status_key, limit, offset, cache_key)
                 
         except Exception as e:
             logger.error(f"Failed to get candidates by status: {e}")
@@ -389,38 +492,31 @@ class DatabaseManager:
             return []
             
     def get_status_statistics(self) -> Dict[str, Any]:
-        """상태별 통계 정보 조회"""
+        """상태별 통계 정보 조회 (캐시 사용)"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                # 상태별 개수
-                cursor = conn.execute("""
-                    SELECT json_extract(status_info, '$.current_status') as status, COUNT(*) as count
-                    FROM candidates
-                    GROUP BY status
-                """)
-                
-                status_counts = {}
-                for row in cursor.fetchall():
-                    status, count = row
-                    status_counts[status or "unknown"] = count
-                    
-                # 최근 활동
-                cursor = conn.execute("""
-                    SELECT COUNT(*) FROM status_history 
-                    WHERE timestamp >= datetime('now', '-24 hours')
-                """)
-                recent_changes = cursor.fetchone()[0]
-                
-                # 총 후보 수
-                cursor = conn.execute("SELECT COUNT(*) FROM candidates")
-                total_candidates = cursor.fetchone()[0]
-                
-                return {
-                    "total_candidates": total_candidates,
-                    "status_distribution": status_counts,
-                    "recent_changes_24h": recent_changes,
-                    "last_updated": datetime.now().isoformat()
-                }
+            # 캐시 키 생성 (5분마다 갱신)
+            cache_key = f"{int(time.time() // self._cache_timeout)}"
+            status_counts = self._get_cached_status_counts(cache_key)
+            
+            conn = self._get_connection()
+            
+            # 최근 활동
+            cursor = conn.execute("""
+                SELECT COUNT(*) FROM status_history 
+                WHERE timestamp >= datetime('now', '-24 hours')
+            """)
+            recent_changes = cursor.fetchone()[0]
+            
+            # 총 후보 수
+            cursor = conn.execute("SELECT COUNT(*) FROM candidates")
+            total_candidates = cursor.fetchone()[0]
+            
+            return {
+                "total_candidates": total_candidates,
+                "status_distribution": status_counts,
+                "recent_changes_24h": recent_changes,
+                "last_updated": datetime.now().isoformat()
+            }
                 
         except Exception as e:
             logger.error(f"Failed to get status statistics: {e}")
@@ -461,6 +557,248 @@ class DatabaseManager:
             logger.error(f"Failed to delete candidate: {e}")
             return False
             
+    def save_search_event(
+        self, 
+        candidate_id: str, 
+        search_event: Dict[str, Any]
+    ) -> bool:
+        """
+        T03_S02_M02: 검색 이벤트 저장
+        
+        Args:
+            candidate_id: 후보 ID
+            search_event: 검색 이벤트 정보
+            
+        Returns:
+            저장 성공 여부
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                metadata = {
+                    'image_data': search_event.get('image_data'),
+                    'uploaded_image': str(search_event.get('uploaded_image', '')),
+                    'user_agent': 'dashboard',
+                    'session_info': search_event.get('session_info', {})
+                }
+                
+                conn.execute("""
+                    INSERT INTO search_history 
+                    (candidate_id, search_engine, query, search_type, search_url, session_key, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    candidate_id,
+                    search_event.get('engine', ''),
+                    search_event.get('query', ''),
+                    search_event.get('type', 'text'),
+                    search_event.get('url', ''),
+                    search_event.get('session_key', ''),
+                    json.dumps(metadata)
+                ))
+                
+                conn.commit()
+                logger.info(f"Saved search event for candidate {candidate_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to save search event: {e}")
+            return False
+    
+    def get_search_history(
+        self, 
+        candidate_id: str = None, 
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        검색 이력 조회
+        
+        Args:
+            candidate_id: 특정 후보의 이력만 조회 (None이면 전체)
+            limit: 최대 조회 개수
+            
+        Returns:
+            검색 이력 목록
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                if candidate_id:
+                    cursor = conn.execute("""
+                        SELECT id, candidate_id, search_engine, query, search_type, 
+                               search_url, session_key, timestamp, metadata
+                        FROM search_history 
+                        WHERE candidate_id = ?
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (candidate_id, limit))
+                else:
+                    cursor = conn.execute("""
+                        SELECT id, candidate_id, search_engine, query, search_type, 
+                               search_url, session_key, timestamp, metadata
+                        FROM search_history 
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (limit,))
+                
+                rows = cursor.fetchall()
+                
+                history = []
+                for row in rows:
+                    (search_id, cand_id, engine, query, search_type, 
+                     url, session_key, timestamp, metadata) = row
+                    
+                    history.append({
+                        "id": search_id,
+                        "candidate_id": cand_id,
+                        "search_engine": engine,
+                        "query": query,
+                        "search_type": search_type,
+                        "search_url": url,
+                        "session_key": session_key,
+                        "timestamp": timestamp,
+                        "metadata": json.loads(metadata) if metadata else {}
+                    })
+                    
+                return history
+                
+        except Exception as e:
+            logger.error(f"Failed to get search history: {e}")
+            return []
+    
+    def save_search_feedback(
+        self, 
+        candidate_id: str, 
+        feedback_type: str,
+        search_id: int = None,
+        comments: str = None,
+        session_key: str = None
+    ) -> bool:
+        """
+        검색 피드백 저장
+        
+        Args:
+            candidate_id: 후보 ID
+            feedback_type: 피드백 유형 (positive, neutral, negative)
+            search_id: 관련 검색 ID (선택적)
+            comments: 추가 코멘트 (선택적)
+            session_key: 세션 키 (선택적)
+            
+        Returns:
+            저장 성공 여부
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    INSERT INTO search_feedback 
+                    (candidate_id, search_id, feedback_type, comments, session_key)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (candidate_id, search_id, feedback_type, comments, session_key))
+                
+                conn.commit()
+                logger.info(f"Saved search feedback for candidate {candidate_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to save search feedback: {e}")
+            return False
+    
+    def get_search_statistics(self) -> Dict[str, Any]:
+        """
+        검색 관련 통계 조회
+        
+        Returns:
+            검색 통계 정보
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # 검색 엔진별 사용 통계
+                cursor = conn.execute("""
+                    SELECT search_engine, COUNT(*) as count
+                    FROM search_history
+                    GROUP BY search_engine
+                """)
+                engine_stats = dict(cursor.fetchall())
+                
+                # 검색 타입별 통계
+                cursor = conn.execute("""
+                    SELECT search_type, COUNT(*) as count
+                    FROM search_history
+                    GROUP BY search_type
+                """)
+                type_stats = dict(cursor.fetchall())
+                
+                # 최근 24시간 검색 수
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM search_history 
+                    WHERE timestamp >= datetime('now', '-24 hours')
+                """)
+                recent_searches = cursor.fetchone()[0]
+                
+                # 피드백 통계
+                cursor = conn.execute("""
+                    SELECT feedback_type, COUNT(*) as count
+                    FROM search_feedback
+                    GROUP BY feedback_type
+                """)
+                feedback_stats = dict(cursor.fetchall())
+                
+                # 총 검색 수
+                cursor = conn.execute("SELECT COUNT(*) FROM search_history")
+                total_searches = cursor.fetchone()[0]
+                
+                # 고유 후보 검색 수
+                cursor = conn.execute("SELECT COUNT(DISTINCT candidate_id) FROM search_history")
+                unique_candidates = cursor.fetchone()[0]
+                
+                return {
+                    "total_searches": total_searches,
+                    "unique_candidates_searched": unique_candidates,
+                    "recent_searches_24h": recent_searches,
+                    "engine_distribution": engine_stats,
+                    "type_distribution": type_stats,
+                    "feedback_distribution": feedback_stats,
+                    "last_updated": datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to get search statistics: {e}")
+            return {}
+    
+    def get_popular_search_queries(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        인기 검색 쿼리 조회
+        
+        Args:
+            limit: 최대 조회 개수
+            
+        Returns:
+            인기 검색 쿼리 목록
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT query, COUNT(*) as search_count, 
+                           MAX(timestamp) as last_searched
+                    FROM search_history
+                    WHERE query != '' AND query IS NOT NULL
+                    GROUP BY LOWER(query)
+                    ORDER BY search_count DESC, last_searched DESC
+                    LIMIT ?
+                """, (limit,))
+                
+                popular_queries = []
+                for row in cursor.fetchall():
+                    query, count, last_searched = row
+                    popular_queries.append({
+                        "query": query,
+                        "search_count": count,
+                        "last_searched": last_searched
+                    })
+                    
+                return popular_queries
+                
+        except Exception as e:
+            logger.error(f"Failed to get popular search queries: {e}")
+            return []
+    
     def close(self):
         """데이터베이스 연결 정리"""
         logger.info("Database manager closed")

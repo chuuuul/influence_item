@@ -1,0 +1,37 @@
+# CPU 서버 전용 의존성 - 대시보드 및 API 서버
+# 대시보드
+streamlit>=1.39.0
+pyperclip>=1.8.2
+
+# 웹 자동화 및 스크래핑
+playwright>=1.48.0
+yt-dlp>=2024.12.23
+
+# Google Generative AI
+google-generativeai>=0.8.3
+
+# 데이터 검증
+pydantic>=2.10.0
+
+# 기본 라이브러리
+Pillow>=10.4.0
+numpy>=1.24.0
+
+# 유틸리티
+python-dotenv>=1.0.0
+requests>=2.32.0
+python-dateutil>=2.9.0
+
+# API 서버용
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# 테스트
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+coverage>=7.6.0
+
+# 개발 도구
+black>=24.10.0
+isort>=5.13.0
+flake8>=7.1.0

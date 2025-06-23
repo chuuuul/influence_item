@@ -63,7 +63,7 @@ class WhisperProcessor:
         return logger
     
     def _load_model(self) -> None:
-        """Whisper 모델 로드"""
+        """Whisper 모델 로드 (GPU 최적화)"""
         if whisper is None:
             self.logger.warning("Whisper 모듈이 설치되지 않았습니다. 테스트 모드로 실행됩니다.")
             self.model = None
@@ -73,7 +73,13 @@ class WhisperProcessor:
             self.logger.info(f"Whisper 모델 로드 시작: {self.config.WHISPER_MODEL_SIZE}")
             start_time = time.time()
             
-            self.model = whisper.load_model(self.config.WHISPER_MODEL_SIZE)
+            # GPU 최적화된 모델 로딩
+            device = "cuda" if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available else "cpu"
+            
+            self.model = whisper.load_model(
+                self.config.WHISPER_MODEL_SIZE,
+                device=device
+            )
             
             load_time = time.time() - start_time
             self.logger.info(f"Whisper 모델 로드 완료 - 소요시간: {load_time:.2f}초")

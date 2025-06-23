@@ -1,0 +1,34 @@
+{
+  "hash": "d907eb2cc562b179ca122141e24c98ae",
+  "timestamp": 85.5,
+  "timeframe_info": {
+    "start_time": 80.0,
+    "end_time": 90.0,
+    "confidence_score": 0.85,
+    "reason": "제품 사용 시연"
+  },
+  "quality_scores": {
+    "sharpness": 1.0,
+    "size": 0.14814814814814814,
+    "brightness": 0.9966937764485677,
+    "contrast": 0.38532030324594346
+  },
+  "composite_score": 0.7076458524138957,
+  "object_confidence": 0.75,
+  "image_dimensions": {
+    "width": 640,
+    "height": 480
+  },
+  "file_paths": {
+    "original": "temp/product_images/d907eb2cc562b179ca122141e24c98ae.jpg",
+    "thumbnail_150": "temp/product_images/thumbnails_150/d907eb2cc562b179ca122141e24c98ae_150.jpg",
+    "thumbnail_300": "temp/product_images/thumbnails_300/d907eb2cc562b179ca122141e24c98ae_300.jpg",
+    "metadata": "temp/product_images/d907eb2cc562b179ca122141e24c98ae.json"
+  },
+  "extracted_at": 1750679309.3234088,
+  "file_sizes": {
+    "original": 360989,
+    "thumbnail_150": 8430,
+    "thumbnail_300": 44452
+  }
+}

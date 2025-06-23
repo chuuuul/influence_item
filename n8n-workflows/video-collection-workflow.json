@@ -1,0 +1,485 @@
+{
+  "name": "Daily Video Collection Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "cronExpression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily 7AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 워크플로우 시작 로그\nconst startTime = new Date().toISOString();\nconsole.log(`[${startTime}] 자동 영상 수집 워크플로우 시작`);\n\n// 워크플로우 상태 데이터 초기화\nconst workflowData = {\n  startTime: startTime,\n  totalChannels: 0,\n  totalVideos: 0,\n  newVideosFound: 0,\n  errors: []\n};\n\nreturn [{ json: workflowData }];"
+      },
+      "id": "workflow-init",
+      "name": "Workflow Initialization",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "{{$env.GOOGLE_SHEETS_CHANNEL_LIST_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "채널목록",
+          "mode": "name"
+        },
+        "options": {
+          "range": "A:D",
+          "valueRenderMode": "FORMATTED_VALUE"
+        }
+      },
+      "id": "read-channels",
+      "name": "Read Channel List",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Google Sheets에서 읽은 채널 데이터 처리\nconst channels = [];\nconst inputData = $input.all();\n\n// 첫 번째 행은 헤더이므로 제외\nfor (let i = 1; i < inputData.length; i++) {\n  const row = inputData[i].json;\n  \n  // 채널명, RSS URL, 타입, 연예인 이름 추출\n  if (row.A && row.B) { // 채널명과 RSS URL이 있는 경우만\n    channels.push({\n      channelName: row.A,\n      rssUrl: row.B,\n      channelType: row.C || 'personal', // 개인채널/미디어채널\n      celebrityNames: row.D ? row.D.split(',').map(name => name.trim()) : []\n    });\n  }\n}\n\nconsole.log(`총 ${channels.length}개 채널 로드됨`);\n\n// 각 채널을 개별 아이템으로 출력\nreturn channels.map(channel => ({ json: channel }));"
+      },
+      "id": "process-channels",
+      "name": "Process Channel Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-channels",
+      "name": "Loop Over Channels",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.rssUrl }}",
+        "options": {
+          "fullResponse": false
+        }
+      },
+      "id": "fetch-rss",
+      "name": "Fetch RSS Feed",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// RSS 피드에서 새 영상 필터링 및 분석\nconst channelData = $('Loop Over Channels').item.json;\nconst rssItems = $input.all();\nconst currentTime = new Date();\nconst oneDayAgo = new Date(currentTime - 24 * 60 * 60 * 1000); // 24시간 전\n\nconst newVideos = [];\n\nfor (const item of rssItems) {\n  const video = item.json;\n  const publishDate = new Date(video.pubDate || video.published);\n  \n  // 24시간 이내 업로드된 영상만 처리\n  if (publishDate > oneDayAgo) {\n    // 미디어 채널의 경우 연예인 이름 필터링\n    let shouldProcess = true;\n    \n    if (channelData.channelType === 'media' && channelData.celebrityNames.length > 0) {\n      shouldProcess = channelData.celebrityNames.some(name => \n        video.title.toLowerCase().includes(name.toLowerCase())\n      );\n    }\n    \n    if (shouldProcess) {\n      newVideos.push({\n        channelName: channelData.channelName,\n        channelType: channelData.channelType,\n        videoTitle: video.title,\n        videoUrl: video.link,\n        publishDate: video.pubDate || video.published,\n        description: video.description || '',\n        guid: video.guid\n      });\n    }\n  }\n}\n\nconsole.log(`${channelData.channelName}에서 ${newVideos.length}개 새 영상 발견`);\n\nreturn newVideos.map(video => ({ json: video }));"
+      },
+      "id": "filter-new-videos",
+      "name": "Filter New Videos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-new-videos",
+              "leftValue": "={{ $json.videoUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-new-videos",
+      "name": "Check New Videos",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.PYTHON_ANALYSIS_ENDPOINT }}/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.ANALYSIS_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "video_url",
+              "value": "={{ $json.videoUrl }}"
+            },
+            {
+              "name": "channel_name",
+              "value": "={{ $json.channelName }}"
+            },
+            {
+              "name": "video_title",
+              "value": "={{ $json.videoTitle }}"
+            },
+            {
+              "name": "publish_date",
+              "value": "={{ $json.publishDate }}"
+            },
+            {
+              "name": "priority",
+              "value": "high"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "trigger-analysis",
+      "name": "Trigger Python Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 분석 트리거 결과 로깅\nconst analysisResult = $json;\nconst videoData = $('Filter New Videos').item.json;\n\nconsole.log(`분석 요청 전송: ${videoData.videoTitle}`);\nconsole.log(`분석 작업 ID: ${analysisResult.job_id}`);\n\n// 루프로 돌아가기 위한 데이터 구성\nreturn [{\n  json: {\n    ...videoData,\n    analysisJobId: analysisResult.job_id,\n    analysisStatus: 'queued',\n    triggeredAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "log-analysis",
+      "name": "Log Analysis Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "🎬 새 영상 분석 시작\\n채널: {{ $json.channelName }}\\n제목: {{ $json.videoTitle }}\\n작업 ID: {{ $json.analysisJobId }}",
+        "otherOptions": {}
+      },
+      "id": "notify-analysis-started",
+      "name": "Notify Analysis Started",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 에러 처리 및 로깅\nconst error = $json;\nconst videoData = $('Filter New Videos').item.json;\n\nconsole.error(`분석 요청 실패: ${videoData.videoTitle}`);\nconsole.error(`에러: ${error.message}`);\n\n// 에러 데이터 구성\nreturn [{\n  json: {\n    ...videoData,\n    error: error.message,\n    errorTime: new Date().toISOString(),\n    status: 'failed'\n  }\n}];"
+      },
+      "id": "handle-analysis-error",
+      "name": "Handle Analysis Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "❌ 영상 분석 실패\\n채널: {{ $json.channelName }}\\n제목: {{ $json.videoTitle }}\\n에러: {{ $json.error }}",
+        "otherOptions": {}
+      },
+      "id": "notify-analysis-error",
+      "name": "Notify Analysis Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 워크플로우 완료 처리\nconst allResults = $input.all();\nconst successCount = allResults.filter(item => item.json.analysisJobId).length;\nconst errorCount = allResults.filter(item => item.json.error).length;\nconst totalProcessed = successCount + errorCount;\n\nconst summary = {\n  workflowEndTime: new Date().toISOString(),\n  totalChannelsProcessed: $('Loop Over Channels').itemLists?.length || 0,\n  totalVideosAnalyzed: successCount,\n  totalErrors: errorCount,\n  totalProcessed: totalProcessed,\n  successRate: totalProcessed > 0 ? (successCount / totalProcessed * 100).toFixed(2) : 0\n};\n\nconsole.log('워크플로우 완료 요약:', summary);\n\nreturn [{ json: summary }];"
+      },
+      "id": "workflow-summary",
+      "name": "Workflow Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "📊 일일 영상 수집 완료\\n\\n📈 처리 현황:\\n- 처리된 채널: {{ $json.totalChannelsProcessed }}개\\n- 분석 시작된 영상: {{ $json.totalVideosAnalyzed }}개\\n- 에러 발생: {{ $json.totalErrors }}개\\n- 성공률: {{ $json.successRate }}%\\n\\n⏰ 완료 시간: {{ $json.workflowEndTime }}",
+        "otherOptions": {}
+      },
+      "id": "final-notification",
+      "name": "Send Final Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2700,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 7AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Workflow Initialization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Initialization": {
+      "main": [
+        [
+          {
+            "node": "Read Channel List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Channel List": {
+      "main": [
+        [
+          {
+            "node": "Process Channel Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Channel Data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Channels": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS Feed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Workflow Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS Feed": {
+      "main": [
+        [
+          {
+            "node": "Filter New Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Videos": {
+      "main": [
+        [
+          {
+            "node": "Check New Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New Videos": {
+      "main": [
+        [
+          {
+            "node": "Trigger Python Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Python Analysis": {
+      "main": [
+        [
+          {
+            "node": "Log Analysis Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Handle Analysis Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Analysis Request": {
+      "main": [
+        [
+          {
+            "node": "Notify Analysis Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Analysis Started": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Analysis Error": {
+      "main": [
+        [
+          {
+            "node": "Notify Analysis Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Analysis Error": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Summary": {
+      "main": [
+        [
+          {
+            "node": "Send Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-06-23T21:35:00.000Z",
+  "updatedAt": "2025-06-23T21:35:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-workflow"
+    }
+  },
+  "staticData": {},
+  "tags": ["automation", "video-collection", "daily"]
+}

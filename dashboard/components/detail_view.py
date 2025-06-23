@@ -11,6 +11,8 @@ from urllib.parse import urlparse, parse_qs
 import sys
 from pathlib import Path
 from .ai_content_display import render_ai_content_display_component
+from .product_image_gallery import ProductImageGallery
+from .external_search import ExternalSearchComponent
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent.parent.parent
@@ -560,6 +562,334 @@ def render_product_info_section(candidate_info):
             st.markdown("**제품 특징**: 없음")
 
 
+def render_product_image_gallery_section(candidate_data):
+    """제품 이미지 갤러리 섹션 렌더링"""
+    st.markdown("### 🖼️ 제품 이미지 갤러리")
+    
+    # 이미지 데이터 추출 시도
+    product_images = []
+    
+    # 1. candidate_data에서 직접 이미지 정보 확인
+    if 'selected_product_images' in candidate_data:
+        product_images = candidate_data['selected_product_images']
+    elif 'all_product_images' in candidate_data:
+        product_images = candidate_data['all_product_images']
+    
+    # 2. 분석 결과에서 추출 시도
+    analysis_results = candidate_data.get('analysis_results', {})
+    if not product_images and 'frame_analysis' in analysis_results:
+        frame_analysis = analysis_results['frame_analysis']
+        if hasattr(frame_analysis, 'selected_product_images'):
+            product_images = frame_analysis.selected_product_images
+        elif hasattr(frame_analysis, 'all_product_images'):
+            product_images = frame_analysis.all_product_images
+    
+    # 3. 샘플 데이터 (개발/테스트용)
+    if not product_images:
+        st.info("현재 이 후보에 대해 추출된 제품 이미지가 없습니다.")
+        
+        # 개발용 샘플 데이터
+        with st.expander("📋 샘플 이미지 데이터 (개발용)", expanded=False):
+            if st.button("샘플 이미지 데이터 로드"):
+                # 실제 이미지 파일 없이 메타데이터만 시뮬레이션
+                sample_images = []
+                for i in range(4):
+                    sample_image = {
+                        "hash": f"sample_hash_{i}",
+                        "timestamp": 85.2 + i * 15,
+                        "composite_score": 0.65 + (i * 0.08),
+                        "object_confidence": 0.45 + (i * 0.1),
+                        "quality_scores": {
+                            "sharpness": 0.7 + (i * 0.05),
+                            "size": 0.8 + (i * 0.02),
+                            "brightness": 0.6 + (i * 0.03),
+                            "contrast": 0.75 + (i * 0.01)
+                        },
+                        "image_dimensions": {
+                            "width": 1280 + i * 64,
+                            "height": 720 + i * 36
+                        },
+                        "file_paths": {
+                            "original": f"temp/product_images/sample_{i}.jpg",
+                            "thumbnail_150": f"temp/product_images/thumbnails_150/sample_{i}_150.jpg",
+                            "thumbnail_300": f"temp/product_images/thumbnails_300/sample_{i}_300.jpg"
+                        },
+                        "file_sizes": {
+                            "original": 180000 + i * 25000,
+                            "thumbnail_150": 12000 + i * 1500,
+                            "thumbnail_300": 35000 + i * 4000
+                        },
+                        "timeframe_info": {
+                            "start_time": 80.0,
+                            "end_time": 120.0,
+                            "confidence_score": 0.85,
+                            "reason": "제품 사용 시연 구간"
+                        }
+                    }
+                    sample_images.append(sample_image)
+                
+                st.session_state[f'sample_images_{id(candidate_data)}'] = sample_images
+                st.success("샘플 이미지 데이터가 로드되었습니다!")
+                st.rerun()
+        
+        # 세션에서 샘플 데이터 확인
+        sample_key = f'sample_images_{id(candidate_data)}'
+        if sample_key in st.session_state:
+            product_images = st.session_state[sample_key]
+    
+    # 4. 갤러리 표시
+    if product_images:
+        try:
+            gallery = ProductImageGallery()
+            
+            # 갤러리 표시 옵션
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                columns = st.selectbox("열 개수", [2, 3, 4], index=1, key="gallery_columns")
+            with col2:
+                show_metadata = st.checkbox("메타데이터 표시", value=True, key="show_metadata")
+            with col3:
+                show_selection = st.checkbox("선택 기능", value=True, key="show_selection")
+            
+            # 갤러리 렌더링
+            selected_images = gallery.display_gallery(
+                product_images=product_images,
+                key_prefix=f"detail_gallery_{id(candidate_data)}",
+                columns=columns,
+                show_selection=show_selection,
+                show_metadata=show_metadata
+            )
+            
+            # 선택된 이미지 정보 표시
+            if show_selection and selected_images:
+                st.markdown("---")
+                st.markdown("### 📊 선택된 이미지 정보")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    avg_quality = sum(img.get("composite_score", 0) for img in selected_images) / len(selected_images)
+                    st.metric("평균 품질 점수", f"{avg_quality:.3f}")
+                
+                with col2:
+                    avg_confidence = sum(img.get("object_confidence", 0) for img in selected_images) / len(selected_images)
+                    st.metric("평균 객체 신뢰도", f"{avg_confidence:.3f}")
+                
+                with col3:
+                    total_size = sum(img.get("file_sizes", {}).get("original", 0) for img in selected_images)
+                    st.metric("총 파일 크기", f"{total_size // 1024} KB")
+                
+                # JSON 내보내기
+                if st.button("📤 선택된 이미지 정보 JSON 내보내기"):
+                    export_data = gallery.export_selected_images_info(selected_images)
+                    st.json(export_data)
+                    st.success("선택된 이미지 정보를 JSON 형태로 내보냈습니다.")
+            
+            # 이미지 추출 통계
+            st.markdown("---")
+            st.markdown("### 📈 이미지 추출 통계")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("총 이미지 수", len(product_images))
+            
+            with col2:
+                if product_images:
+                    max_quality = max(img.get("composite_score", 0) for img in product_images)
+                    st.metric("최고 품질 점수", f"{max_quality:.3f}")
+            
+            with col3:
+                if product_images:
+                    time_range = max(img.get("timestamp", 0) for img in product_images) - min(img.get("timestamp", 0) for img in product_images)
+                    st.metric("시간 범위", f"{time_range:.1f}초")
+            
+            with col4:
+                if product_images and product_images[0].get("timeframe_info"):
+                    timeframe_confidence = product_images[0]["timeframe_info"].get("confidence_score", 0)
+                    st.metric("구간 신뢰도", f"{timeframe_confidence:.3f}")
+                
+        except Exception as e:
+            st.error(f"이미지 갤러리 렌더링 중 오류가 발생했습니다: {str(e)}")
+            st.exception(e)
+    
+    else:
+        st.info("🔍 제품 이미지를 추출하려면 AI 분석 파이프라인에서 이미지 추출 옵션을 활성화해야 합니다.")
+        
+        # 도움말
+        with st.expander("💡 제품 이미지 추출 방법", expanded=False):
+            st.markdown("""
+            제품 이미지는 다음과 같은 과정을 통해 자동으로 추출됩니다:
+            
+            1. **타겟 시간대 분석**: AI가 제품 언급 구간을 식별
+            2. **프레임 추출**: 해당 구간에서 고품질 프레임들을 추출
+            3. **품질 평가**: 선명도, 해상도, 객체 탐지 신뢰도 기반으로 점수 계산
+            4. **이미지 선별**: 최고 품질의 이미지 3-5개를 자동 선별
+            5. **썸네일 생성**: 다양한 크기의 썸네일 자동 생성
+            
+            **주요 평가 기준**:
+            - **선명도 (40%)**: Laplacian variance 기반 blur 측정
+            - **해상도 (30%)**: 이미지 크기 및 화질
+            - **객체 탐지 신뢰도 (30%)**: YOLO 모델의 제품 인식 정확도
+            """)
+
+
+def render_external_search_section(candidate_data):
+    """
+    T03_S02_M02: 외부 검색 연동 기능 섹션 렌더링
+    PRD SPEC-DASH-04의 반자동 보조 검색 기능 구현
+    """
+    try:
+        # 외부 검색 컴포넌트 초기화
+        search_component = ExternalSearchComponent()
+        
+        # 후보 ID 추출
+        candidate_id = candidate_data.get('id') or f"candidate_{hash(str(candidate_data))}"
+        
+        # 검색 섹션 렌더링
+        search_event = search_component.render_search_section(
+            candidate_data, 
+            key_prefix=f"detail_search_{candidate_id}"
+        )
+        
+        # 검색 이벤트 처리
+        if search_event:
+            # 검색 이벤트 데이터베이스에 저장
+            try:
+                search_event['session_key'] = f"detail_search_{candidate_id}"
+                
+                if get_database_manager:
+                    db_manager = get_database_manager()
+                    success = db_manager.save_search_event(candidate_id, search_event)
+                    
+                    if success:
+                        st.info("🔍 검색 이력이 저장되었습니다.")
+                    else:
+                        st.warning("⚠️ 검색 이력 저장에 실패했습니다.")
+                        
+            except Exception as e:
+                st.error(f"검색 이벤트 저장 중 오류: {str(e)}")
+        
+        # 검색 이력 표시 (접힌 상태로)
+        with st.expander("📊 이 제품의 검색 이력", expanded=False):
+            if get_database_manager:
+                try:
+                    db_manager = get_database_manager()
+                    search_history = db_manager.get_search_history(candidate_id, limit=10)
+                    
+                    if search_history:
+                        st.markdown("**최근 검색 기록**")
+                        
+                        for i, search in enumerate(search_history):
+                            engine_icons = {'google': '🔍', 'naver': '🟢'}
+                            type_icons = {'text': '📝', 'image': '🖼️', 'shopping': '🛍️'}
+                            
+                            engine_icon = engine_icons.get(search['search_engine'], '🔍')
+                            type_icon = type_icons.get(search['search_type'], '📝')
+                            
+                            timestamp = search['timestamp']
+                            if isinstance(timestamp, str):
+                                try:
+                                    timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                    timestamp_str = timestamp.strftime('%m-%d %H:%M')
+                                except:
+                                    timestamp_str = timestamp[:16]
+                            else:
+                                timestamp_str = str(timestamp)[:16]
+                            
+                            st.markdown(f"**{i+1}.** {engine_icon} {type_icon} `{search['query']}` - {timestamp_str}")
+                        
+                        # 검색 통계
+                        st.markdown("---")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            google_count = sum(1 for s in search_history if s['search_engine'] == 'google')
+                            st.metric("Google 검색", google_count)
+                        
+                        with col2:
+                            naver_count = sum(1 for s in search_history if s['search_engine'] == 'naver')
+                            st.metric("네이버 검색", naver_count)
+                        
+                        with col3:
+                            image_count = sum(1 for s in search_history if s['search_type'] == 'image')
+                            st.metric("이미지 검색", image_count)
+                    
+                    else:
+                        st.info("📭 이 제품에 대한 검색 이력이 없습니다.")
+                        
+                except Exception as e:
+                    st.error(f"검색 이력 조회 중 오류: {str(e)}")
+            else:
+                st.warning("데이터베이스 연결을 사용할 수 없습니다.")
+        
+        # 글로벌 검색 통계 (관리자용)
+        with st.expander("📈 전체 검색 통계 (관리자용)", expanded=False):
+            if get_database_manager:
+                try:
+                    db_manager = get_database_manager()
+                    search_stats = db_manager.get_search_statistics()
+                    
+                    if search_stats:
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("총 검색 수", search_stats.get('total_searches', 0))
+                            st.metric("최근 24시간", search_stats.get('recent_searches_24h', 0))
+                        
+                        with col2:
+                            engine_dist = search_stats.get('engine_distribution', {})
+                            st.markdown("**검색 엔진별 사용량**")
+                            for engine, count in engine_dist.items():
+                                st.markdown(f"- {engine}: {count}회")
+                        
+                        with col3:
+                            type_dist = search_stats.get('type_distribution', {})
+                            st.markdown("**검색 타입별 사용량**")
+                            for search_type, count in type_dist.items():
+                                st.markdown(f"- {search_type}: {count}회")
+                        
+                        # 인기 검색어
+                        popular_queries = db_manager.get_popular_search_queries(5)
+                        if popular_queries:
+                            st.markdown("**인기 검색어 TOP 5**")
+                            for i, query_info in enumerate(popular_queries):
+                                st.markdown(f"{i+1}. `{query_info['query']}` ({query_info['search_count']}회)")
+                    
+                except Exception as e:
+                    st.error(f"검색 통계 조회 중 오류: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"외부 검색 컴포넌트 로딩 중 오류가 발생했습니다: {str(e)}")
+        
+        # 폴백: 기본 검색 링크 제공
+        st.markdown("### 🔎 외부 검색 (기본 모드)")
+        st.warning("고급 검색 기능을 일시적으로 사용할 수 없습니다.")
+        
+        candidate_info = candidate_data.get('candidate_info', {})
+        product_name = candidate_info.get('product_name_ai', '')
+        
+        if product_name:
+            from urllib.parse import quote_plus
+            encoded_query = quote_plus(product_name)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                google_url = f"https://www.google.com/search?q={encoded_query}&hl=ko&gl=KR"
+                st.markdown(f"[🔍 Google에서 검색]({google_url})")
+                
+                google_image_url = f"https://www.google.com/search?q={encoded_query}&tbm=isch&hl=ko&gl=KR"
+                st.markdown(f"[🖼️ Google 이미지 검색]({google_image_url})")
+            
+            with col2:
+                naver_url = f"https://search.naver.com/search.naver?query={encoded_query}"
+                st.markdown(f"[🟢 네이버에서 검색]({naver_url})")
+                
+                naver_image_url = f"https://search.naver.com/search.naver?where=image&query={encoded_query}"
+                st.markdown(f"[🖼️ 네이버 이미지 검색]({naver_image_url})")
+        else:
+            st.info("제품 정보가 없어 검색 링크를 생성할 수 없습니다.")
+
+
 def render_ai_analysis_section(candidate_info):
     """AI 분석 결과 섹션 렌더링"""
     st.markdown("### 🤖 AI 분석 결과")
@@ -727,8 +1057,8 @@ def render_detail_view_enhanced(candidate_data):
         }
         st.metric("📊 상태", f"{status_colors.get(current_status, '⚪')} {current_status}")
     
-    # 메인 콘텐츠 탭
-    tab1, tab2, tab3, tab4 = st.tabs(["📺 영상 정보", "🛍️ 제품 정보", "🤖 AI 분석", "💰 수익화 정보"])
+    # 메인 콘텐츠 탭 (T03_S02_M02: 외부 검색 탭 추가)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📺 영상 정보", "🛍️ 제품 정보", "🤖 AI 분석", "🖼️ 제품 이미지", "💰 수익화 정보", "🔎 외부 검색"])
     
     with tab1:
         render_source_info_section(source_info)
@@ -765,6 +1095,9 @@ def render_detail_view_enhanced(candidate_data):
         render_ai_analysis_section(candidate_info)
     
     with tab4:
+        render_product_image_gallery_section(candidate_data)
+    
+    with tab5:
         st.markdown("### 💰 수익화 정보")
         
         is_coupang_product = monetization_info.get('is_coupang_product', False)
@@ -793,6 +1126,10 @@ def render_detail_view_enhanced(candidate_data):
             st.error(f"🚨 PPL 가능성 높음 (확률: {ppl_confidence:.1%})")
         else:
             st.success(f"✅ 자연스러운 추천 (PPL 확률: {ppl_confidence:.1%})")
+    
+    with tab6:
+        # T03_S02_M02: 외부 검색 연동 기능
+        render_external_search_section(candidate_data)
     
     # T07_S01_M02: AI 생성 콘텐츠 표시 섹션
     st.markdown("---")

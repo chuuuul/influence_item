@@ -10,8 +10,11 @@ import numpy as np
 import logging
 import time
 import os
+import hashlib
+import json
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
+from PIL import Image, ImageEnhance
 
 from ..gemini_analyzer.models import (
     TargetTimeframe, ExtractedFrame, FrameAnalysisResult, 
@@ -21,6 +24,283 @@ from .ocr_processor import OCRProcessor
 from .object_detector import ObjectDetector
 from ..gpu_optimizer.gpu_optimizer import GPUOptimizer
 from config.config import Config
+
+
+class ProductImageExtractor:
+    """제품 이미지 추출 및 품질 평가 클래스"""
+    
+    def __init__(self, output_dir: str = "temp/product_images"):
+        """
+        제품 이미지 추출기 초기화
+        
+        Args:
+            output_dir: 이미지 저장 디렉토리
+        """
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 썸네일 디렉토리들
+        self.thumbnail_150_dir = self.output_dir / "thumbnails_150"
+        self.thumbnail_300_dir = self.output_dir / "thumbnails_300"
+        self.thumbnail_150_dir.mkdir(exist_ok=True)
+        self.thumbnail_300_dir.mkdir(exist_ok=True)
+        
+        self.logger = logging.getLogger(__name__)
+    
+    def _calculate_frame_hash(self, frame: np.ndarray) -> str:
+        """프레임 해시 계산 (중복 방지용)"""
+        frame_bytes = cv2.imencode('.jpg', frame)[1].tobytes()
+        return hashlib.md5(frame_bytes).hexdigest()
+    
+    def _assess_image_quality(self, frame: np.ndarray) -> Dict[str, float]:
+        """
+        이미지 품질 평가 (다중 기준)
+        
+        Args:
+            frame: 평가할 프레임
+            
+        Returns:
+            Dict[str, float]: 품질 점수들
+        """
+        try:
+            # 1. 선명도 평가 (Laplacian variance)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            sharpness_score = min(laplacian_var / 1000.0, 1.0)
+            
+            # 2. 크기 평가 (해상도)
+            height, width = frame.shape[:2]
+            size_score = min((width * height) / (1920 * 1080), 1.0)  # Full HD 기준
+            
+            # 3. 밝기 평가
+            brightness = np.mean(gray)
+            brightness_score = 1.0 - abs(brightness - 128) / 128  # 중간 밝기가 최적
+            
+            # 4. 대비 평가
+            contrast_score = np.std(gray) / 128.0
+            contrast_score = min(contrast_score, 1.0)
+            
+            return {
+                "sharpness": float(sharpness_score),
+                "size": float(size_score),
+                "brightness": float(brightness_score),
+                "contrast": float(contrast_score)
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"이미지 품질 평가 실패: {e}")
+            return {
+                "sharpness": 0.5,
+                "size": 0.5,
+                "brightness": 0.5,
+                "contrast": 0.5
+            }
+    
+    def _calculate_composite_score(self, quality_scores: Dict[str, float], object_confidence: float = 0.0) -> float:
+        """
+        종합 품질 점수 계산
+        
+        Args:
+            quality_scores: 개별 품질 점수들
+            object_confidence: 객체 탐지 신뢰도
+            
+        Returns:
+            float: 종합 품질 점수 (0-1)
+        """
+        # 가중치: 선명도 40%, 크기 30%, 객체 탐지 30%
+        weighted_score = (
+            quality_scores["sharpness"] * 0.4 +
+            quality_scores["size"] * 0.3 +
+            object_confidence * 0.3
+        )
+        
+        # 밝기와 대비도 보너스/페널티 (최대 ±10%)
+        brightness_bonus = (quality_scores["brightness"] - 0.5) * 0.1
+        contrast_bonus = (quality_scores["contrast"] - 0.5) * 0.1
+        
+        final_score = weighted_score + brightness_bonus + contrast_bonus
+        return max(0.0, min(1.0, final_score))
+    
+    def _create_thumbnail(self, image: np.ndarray, size: int) -> np.ndarray:
+        """썸네일 생성"""
+        try:
+            # OpenCV to PIL
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(image_rgb)
+            
+            # 종횡비 유지하며 리사이즈
+            pil_image.thumbnail((size, size), Image.Resampling.LANCZOS)
+            
+            # PIL to OpenCV
+            thumbnail_rgb = np.array(pil_image)
+            thumbnail_bgr = cv2.cvtColor(thumbnail_rgb, cv2.COLOR_RGB2BGR)
+            
+            return thumbnail_bgr
+            
+        except Exception as e:
+            self.logger.error(f"썸네일 생성 실패: {e}")
+            # 단순 리사이즈로 폴백
+            height, width = image.shape[:2]
+            scale = size / max(height, width)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+    
+    def save_product_image(
+        self, 
+        frame: np.ndarray, 
+        metadata: Dict[str, Any], 
+        object_confidence: float = 0.0
+    ) -> Dict[str, Any]:
+        """
+        제품 이미지 저장 및 메타데이터 생성
+        
+        Args:
+            frame: 저장할 프레임
+            metadata: 이미지 메타데이터 (timestamp, timeframe_info 등)
+            object_confidence: 객체 탐지 신뢰도
+            
+        Returns:
+            Dict[str, Any]: 저장된 이미지 정보
+        """
+        try:
+            # 해시 기반 파일명 생성
+            frame_hash = self._calculate_frame_hash(frame)
+            
+            # 품질 평가
+            quality_scores = self._assess_image_quality(frame)
+            composite_score = self._calculate_composite_score(quality_scores, object_confidence)
+            
+            # 파일 경로 설정
+            original_path = self.output_dir / f"{frame_hash}.jpg"
+            thumbnail_150_path = self.thumbnail_150_dir / f"{frame_hash}_150.jpg"
+            thumbnail_300_path = self.thumbnail_300_dir / f"{frame_hash}_300.jpg"
+            metadata_path = self.output_dir / f"{frame_hash}.json"
+            
+            # 이미 존재하는 파일인지 확인
+            if original_path.exists():
+                self.logger.debug(f"이미지 이미 존재: {frame_hash}")
+                # 기존 메타데이터 로드
+                if metadata_path.exists():
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        existing_metadata = json.load(f)
+                    return existing_metadata
+            
+            # 원본 이미지 저장
+            cv2.imwrite(str(original_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            
+            # 썸네일 생성 및 저장
+            thumbnail_150 = self._create_thumbnail(frame, 150)
+            thumbnail_300 = self._create_thumbnail(frame, 300)
+            
+            cv2.imwrite(str(thumbnail_150_path), thumbnail_150, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            cv2.imwrite(str(thumbnail_300_path), thumbnail_300, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            
+            # 완전한 메타데이터 생성
+            image_metadata = {
+                "hash": frame_hash,
+                "timestamp": metadata.get("timestamp", time.time()),
+                "timeframe_info": metadata.get("timeframe_info", {}),
+                "quality_scores": quality_scores,
+                "composite_score": composite_score,
+                "object_confidence": object_confidence,
+                "image_dimensions": {
+                    "width": frame.shape[1],
+                    "height": frame.shape[0]
+                },
+                "file_paths": {
+                    "original": str(original_path),
+                    "thumbnail_150": str(thumbnail_150_path),
+                    "thumbnail_300": str(thumbnail_300_path),
+                    "metadata": str(metadata_path)
+                },
+                "extracted_at": time.time(),
+                "file_sizes": {
+                    "original": original_path.stat().st_size if original_path.exists() else 0,
+                    "thumbnail_150": thumbnail_150_path.stat().st_size if thumbnail_150_path.exists() else 0,
+                    "thumbnail_300": thumbnail_300_path.stat().st_size if thumbnail_300_path.exists() else 0
+                }
+            }
+            
+            # 메타데이터 저장
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(image_metadata, f, ensure_ascii=False, indent=2)
+            
+            self.logger.info(f"제품 이미지 저장 완료: {frame_hash} (품질: {composite_score:.3f})")
+            return image_metadata
+            
+        except Exception as e:
+            self.logger.error(f"제품 이미지 저장 실패: {e}")
+            raise
+    
+    def select_best_images(self, image_metadata_list: List[Dict[str, Any]], max_count: int = 5) -> List[Dict[str, Any]]:
+        """
+        최고 품질 이미지 선별
+        
+        Args:
+            image_metadata_list: 이미지 메타데이터 리스트
+            max_count: 최대 선택 개수
+            
+        Returns:
+            List[Dict[str, Any]]: 선별된 이미지 메타데이터 리스트
+        """
+        try:
+            # 종합 점수 기준으로 정렬
+            sorted_images = sorted(
+                image_metadata_list, 
+                key=lambda x: x.get("composite_score", 0), 
+                reverse=True
+            )
+            
+            selected_images = sorted_images[:max_count]
+            
+            self.logger.info(f"최고 품질 이미지 {len(selected_images)}개 선별 완료")
+            return selected_images
+            
+        except Exception as e:
+            self.logger.error(f"이미지 선별 실패: {e}")
+            return image_metadata_list[:max_count]  # 폴백
+    
+    def cleanup_low_quality_images(self, min_score: float = 0.3) -> int:
+        """
+        낮은 품질 이미지 파일 정리
+        
+        Args:
+            min_score: 최소 품질 점수
+            
+        Returns:
+            int: 삭제된 파일 수
+        """
+        deleted_count = 0
+        try:
+            # 메타데이터 파일들 순회
+            for metadata_file in self.output_dir.glob("*.json"):
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    
+                    composite_score = metadata.get("composite_score", 0)
+                    if composite_score < min_score:
+                        # 관련 파일들 삭제
+                        file_paths = metadata.get("file_paths", {})
+                        for path_key, path_str in file_paths.items():
+                            path_obj = Path(path_str)
+                            if path_obj.exists():
+                                path_obj.unlink()
+                        
+                        deleted_count += 1
+                        self.logger.debug(f"낮은 품질 이미지 삭제: {metadata.get('hash', 'unknown')}")
+                
+                except Exception as e:
+                    self.logger.warning(f"이미지 정리 중 오류: {e}")
+                    continue
+            
+            self.logger.info(f"낮은 품질 이미지 {deleted_count}개 정리 완료")
+            return deleted_count
+            
+        except Exception as e:
+            self.logger.error(f"이미지 정리 실패: {e}")
+            return 0
 
 
 class TargetFrameExtractor:
@@ -40,6 +320,9 @@ class TargetFrameExtractor:
         self.gpu_optimizer = GPUOptimizer()
         self.ocr_processor = OCRProcessor(config=self.config)
         self.object_detector = ObjectDetector(gpu_optimizer=self.gpu_optimizer)
+        
+        # 제품 이미지 추출기 초기화
+        self.product_image_extractor = ProductImageExtractor()
         
         # 기본 설정
         self.extraction_config = FrameExtractionConfig()
@@ -243,12 +526,14 @@ class TargetFrameExtractor:
                 cap.release()
             raise
     
-    def analyze_single_frame(self, frame: ExtractedFrame) -> FrameAnalysisResult:
+    def analyze_single_frame(self, frame: ExtractedFrame, save_product_images: bool = False, timeframe_info: Dict[str, Any] = None) -> FrameAnalysisResult:
         """
         단일 프레임 분석 수행
         
         Args:
             frame: 분석할 프레임
+            save_product_images: 제품 이미지 저장 여부
+            timeframe_info: 타임프레임 정보
             
         Returns:
             FrameAnalysisResult: 프레임 분석 결과
@@ -282,6 +567,32 @@ class TargetFrameExtractor:
                 except Exception as e:
                     self.logger.warning(f"객체 인식 실패 (프레임 {frame.frame_index}): {e}")
             
+            # 제품 이미지 저장 (옵션)
+            product_image_metadata = None
+            if save_product_images and frame.frame_data is not None:
+                try:
+                    # 객체 탐지 신뢰도 계산 (평균)
+                    object_confidence = 0.0
+                    if object_detection_results:
+                        confidences = [d.get('confidence', 0) for d in object_detection_results]
+                        object_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+                    
+                    # 이미지 메타데이터 준비
+                    image_metadata = {
+                        "timestamp": frame.timestamp,
+                        "timeframe_info": timeframe_info or {}
+                    }
+                    
+                    # 제품 이미지 저장
+                    product_image_metadata = self.product_image_extractor.save_product_image(
+                        frame.frame_data, 
+                        image_metadata, 
+                        object_confidence
+                    )
+                    
+                except Exception as e:
+                    self.logger.warning(f"제품 이미지 저장 실패 (프레임 {frame.frame_index}): {e}")
+
             processing_time = (time.time() - start_time) * 1000  # 밀리초
             
             result = FrameAnalysisResult(
@@ -293,6 +604,10 @@ class TargetFrameExtractor:
                 analysis_timestamp=time.time(),
                 processing_time_ms=processing_time
             )
+            
+            # 제품 이미지 메타데이터를 결과에 추가 (확장 속성)
+            if product_image_metadata:
+                result.product_image_metadata = product_image_metadata
             
             self.logger.debug(
                 f"프레임 분석 완료 (#{frame.frame_index}): "
@@ -315,7 +630,8 @@ class TargetFrameExtractor:
         self, 
         video_path: str, 
         timeframe: TargetTimeframe,
-        config: Optional[FrameExtractionConfig] = None
+        config: Optional[FrameExtractionConfig] = None,
+        save_product_images: bool = False
     ) -> TargetFrameAnalysisResult:
         """
         타겟 시간대 전체 분석 수행
@@ -324,6 +640,7 @@ class TargetFrameExtractor:
             video_path: 영상 파일 경로
             timeframe: 분석할 타겟 시간대
             config: 프레임 추출 설정
+            save_product_images: 제품 이미지 저장 여부
             
         Returns:
             TargetFrameAnalysisResult: 전체 분석 결과
@@ -345,13 +662,27 @@ class TargetFrameExtractor:
             # 2. GPU 최적화 컨텍스트에서 배치 분석
             frame_results = []
             successful_analyses = 0
+            product_image_metadata_list = []
+            
+            # 타임프레임 정보 준비 (이미지 메타데이터용)
+            timeframe_info = {
+                "start_time": timeframe.start_time,
+                "end_time": timeframe.end_time,
+                "confidence_score": timeframe.confidence_score,
+                "reason": getattr(timeframe, 'reason', '')
+            }
             
             with self.gpu_optimizer.optimized_context():
                 for frame in extracted_frames:
                     try:
-                        result = self.analyze_single_frame(frame)
+                        result = self.analyze_single_frame(frame, save_product_images, timeframe_info)
                         frame_results.append(result)
                         successful_analyses += 1
+                        
+                        # 제품 이미지 메타데이터 수집
+                        if hasattr(result, 'product_image_metadata') and result.product_image_metadata:
+                            product_image_metadata_list.append(result.product_image_metadata)
+                            
                     except Exception as e:
                         self.logger.error(f"프레임 분석 중 오류: {e}")
                         continue
@@ -368,7 +699,14 @@ class TargetFrameExtractor:
             summary_texts = list(set(filter(None, all_texts)))
             summary_objects = list(set(filter(None, all_objects)))
             
-            # 4. 처리 통계
+            # 4. 제품 이미지 선별 (최고 품질 이미지만)
+            selected_product_images = []
+            if product_image_metadata_list:
+                selected_product_images = self.product_image_extractor.select_best_images(
+                    product_image_metadata_list, max_count=5
+                )
+            
+            # 5. 처리 통계
             analysis_end = time.time()
             total_processing_time = analysis_end - analysis_start
             
@@ -377,7 +715,9 @@ class TargetFrameExtractor:
                 "successful_analyses": successful_analyses,
                 "average_processing_time_per_frame": total_processing_time / len(extracted_frames) if extracted_frames else 0,
                 "extraction_success_rate": len(extracted_frames) / max(1, (timeframe.end_time - timeframe.start_time)) if timeframe.end_time > timeframe.start_time else 0,
-                "analysis_success_rate": successful_analyses / len(extracted_frames) if extracted_frames else 0
+                "analysis_success_rate": successful_analyses / len(extracted_frames) if extracted_frames else 0,
+                "product_images_extracted": len(product_image_metadata_list),
+                "product_images_selected": len(selected_product_images)
             }
             
             result = TargetFrameAnalysisResult(
@@ -394,11 +734,17 @@ class TargetFrameExtractor:
                 total_processing_time=total_processing_time
             )
             
+            # 제품 이미지 정보를 결과에 추가 (확장 속성)
+            if selected_product_images:
+                result.selected_product_images = selected_product_images
+                result.all_product_images = product_image_metadata_list
+            
             self.logger.info(
                 f"타겟 시간대 분석 완료: "
                 f"{len(extracted_frames)}개 프레임 처리, "
                 f"{successful_analyses}개 성공, "
                 f"텍스트 {len(summary_texts)}개, 객체 {len(summary_objects)}개 발견, "
+                f"제품 이미지 {len(product_image_metadata_list)}개 추출 ({len(selected_product_images)}개 선별), "
                 f"소요시간 {total_processing_time:.1f}초"
             )
             

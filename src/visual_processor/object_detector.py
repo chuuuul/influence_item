@@ -65,7 +65,7 @@ class ObjectDetector:
         return logger
     
     def _load_model(self) -> None:
-        """YOLO 모델 로딩"""
+        """YOLO 모델 로딩 (GPU 최적화)"""
         if YOLO is None:
             self.logger.warning("ultralytics 라이브러리가 설치되지 않았습니다. 객체 탐지 기능을 사용할 수 없습니다.")
             return
@@ -74,7 +74,16 @@ class ObjectDetector:
             start_time = time.time()
             self.logger.info(f"YOLO 모델 로드 시작: {self.model_name}")
             
+            # GPU 최적화된 모델 로딩
             self.model = YOLO(self.model_name)
+            
+            # GPU 사용 가능할 때 모델을 GPU로 이동
+            if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available:
+                self.model.to('cuda')
+                self.logger.info("YOLO 모델이 GPU로 이동되었습니다")
+            else:
+                self.model.to('cpu')
+                self.logger.info("YOLO 모델이 CPU에서 실행됩니다")
             
             load_time = time.time() - start_time
             self.logger.info(f"YOLO 모델 로드 완료 - 소요시간: {load_time:.2f}초")

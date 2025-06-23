@@ -1,0 +1,211 @@
+{
+  "name": "Analysis Result Notification Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analysis-complete",
+        "options": {
+          "noResponseBody": false
+        }
+      },
+      "id": "analysis-webhook",
+      "name": "Analysis Complete Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ],
+      "webhookId": "analysis-result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 분석 완료 결과 데이터 파싱\nconst resultData = $json;\n\nconsole.log('분석 완료 알림 수신:', resultData.job_id);\n\n// 결과 데이터 구조 파싱\nconst analysisResult = {\n  jobId: resultData.job_id,\n  videoTitle: resultData.video_title,\n  channelName: resultData.channel_name,\n  videoUrl: resultData.video_url,\n  analysisStatus: resultData.status, // 'completed', 'failed', 'partial'\n  candidatesFound: resultData.candidates_found || 0,\n  approvedCandidates: resultData.approved_candidates || 0,\n  rejectedCandidates: resultData.rejected_candidates || 0,\n  avgScore: resultData.avg_score || 0,\n  topProduct: resultData.top_product || null,\n  processingTime: resultData.processing_time_seconds || 0,\n  errorMessage: resultData.error_message || null,\n  timestamp: new Date().toISOString(),\n  dashboardUrl: `${$env.DASHBOARD_BASE_URL}/details/${resultData.job_id}`\n};\n\n// 성공률 계산\nconst totalCandidates = analysisResult.candidatesFound;\nconst approvalRate = totalCandidates > 0 ? \n  (analysisResult.approvedCandidates / totalCandidates * 100).toFixed(1) : 0;\n\nreturn [{\n  json: {\n    ...analysisResult,\n    approvalRate: approvalRate,\n    isSuccess: analysisResult.analysisStatus === 'completed' && analysisResult.candidatesFound > 0,\n    hasError: analysisResult.analysisStatus === 'failed'\n  }\n}];"
+      },
+      "id": "parse-analysis-result",
+      "name": "Parse Analysis Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-success",
+              "leftValue": "={{ $json.isSuccess }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-analysis-status",
+      "name": "Check Analysis Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 성공적인 분석 결과 Slack 메시지 구성\nconst result = $json;\n\n// 이모지와 함께 상태 표시\nconst statusEmoji = result.approvalRate > 50 ? '🎉' : result.approvalRate > 20 ? '👍' : '🔍';\nconst scoreEmoji = result.avgScore > 80 ? '🔥' : result.avgScore > 60 ? '⭐' : '📊';\n\n// 주요 제품 정보\nconst topProductText = result.topProduct ? \n  `\\n🏆 *최고 점수 제품:* ${result.topProduct.name} (${result.topProduct.score}점)` : '';\n\n// Slack 메시지 구성\nconst slackMessage = {\n  channel: $env.SLACK_CHANNEL,\n  blocks: [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": `${statusEmoji} 영상 분석 완료!`\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*📺 채널:*\\n${result.channelName}`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*🎬 영상:*\\n${result.videoTitle}`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*🎯 후보 수:*\\n총 ${result.candidatesFound}개 발견`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*✅ 승인률:*\\n${result.approvalRate}%`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*${scoreEmoji} 평균 점수:*\\n${result.avgScore}점`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*⏱️ 처리 시간:*\\n${result.processingTime}초`\n        }\n      ]\n    }\n  ],\n  attachments: [\n    {\n      \"color\": result.approvalRate > 50 ? \"good\" : result.approvalRate > 20 ? \"warning\" : \"#439FE0\",\n      \"fields\": [\n        {\n          \"title\": \"상세 결과\",\n          \"value\": `승인: ${result.approvedCandidates}개\\n거절: ${result.rejectedCandidates}개${topProductText}`,\n          \"short\": false\n        }\n      ],\n      \"actions\": [\n        {\n          \"type\": \"button\",\n          \"text\": \"🔍 대시보드에서 보기\",\n          \"url\": result.dashboardUrl\n        },\n        {\n          \"type\": \"button\",\n          \"text\": \"🎬 영상 보기\",\n          \"url\": result.videoUrl\n        }\n      ]\n    }\n  ]\n};\n\nreturn [{ json: slackMessage }];"
+      },
+      "id": "format-success-message",
+      "name": "Format Success Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 실패 또는 낮은 성과 분석 결과 Slack 메시지 구성\nconst result = $json;\n\n// 상태에 따른 이모지 및 색상\nlet statusEmoji, color, statusText;\nif (result.hasError) {\n  statusEmoji = '❌';\n  color = 'danger';\n  statusText = '분석 실패';\n} else if (result.candidatesFound === 0) {\n  statusEmoji = '🔍';\n  color = 'warning';\n  statusText = '후보 없음';\n} else {\n  statusEmoji = '📊';\n  color = '#439FE0';\n  statusText = '분석 완료';\n}\n\n// 에러 정보\nconst errorText = result.errorMessage ? \n  `\\n💥 *에러:* ${result.errorMessage}` : '';\n\n// Slack 메시지 구성\nconst slackMessage = {\n  channel: $env.SLACK_CHANNEL,\n  blocks: [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": `${statusEmoji} ${statusText}`\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*📺 채널:*\\n${result.channelName}`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*🎬 영상:*\\n${result.videoTitle}`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*🎯 후보 수:*\\n${result.candidatesFound}개`\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": `*⏱️ 처리 시간:*\\n${result.processingTime}초`\n        }\n      ]\n    }\n  ],\n  attachments: [\n    {\n      \"color\": color,\n      \"fields\": [\n        {\n          \"title\": \"상세 정보\",\n          \"value\": `상태: ${result.analysisStatus}\\n작업 ID: ${result.jobId}${errorText}`,\n          \"short\": false\n        }\n      ],\n      \"actions\": [\n        {\n          \"type\": \"button\",\n          \"text\": \"🎬 영상 확인\",\n          \"url\": result.videoUrl\n        }\n      ]\n    }\n  ]\n};\n\nreturn [{ json: slackMessage }];"
+      },
+      "id": "format-failure-message",
+      "name": "Format Failure Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "channel": "={{ $json.channel }}",
+        "blocksUi": "={{ JSON.stringify($json.blocks) }}",
+        "attachments": "={{ JSON.stringify($json.attachments) }}",
+        "otherOptions": {}\n      },
+      "id": "send-slack-notification",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 알림 발송 결과 로깅\nconst slackResult = $json;\nconst originalData = $('Parse Analysis Result').item.json;\n\nconsole.log(`Slack 알림 발송 완료: ${originalData.jobId}`);\nconsole.log(`메시지 타임스탬프: ${slackResult.ts}`);\n\nreturn [{\n  json: {\n    jobId: originalData.jobId,\n    notificationSent: true,\n    slackMessageTs: slackResult.ts,\n    channel: slackResult.channel,\n    sentAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "log-notification-sent",
+      "name": "Log Notification Sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Analysis Complete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis Result": {
+      "main": [
+        [
+          {
+            "node": "Check Analysis Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Analysis Status": {
+      "main": [
+        [
+          {
+            "node": "Format Success Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Failure Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Message": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Failure Message": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Log Notification Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-06-23T21:50:00.000Z",
+  "updatedAt": "2025-06-23T21:50:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-workflow"
+    }
+  },
+  "staticData": {},
+  "tags": ["analysis", "slack", "notification", "results"]
+}

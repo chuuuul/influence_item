@@ -1,0 +1,340 @@
+{
+  "name": "Error Handling and Retry Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 에러 정보 분석 및 분류\nconst errorData = $json;\nconst workflowInfo = errorData.workflow;\nconst executionInfo = errorData.execution;\nconst errorInfo = errorData.error;\n\n// 에러 심각도 분류\nlet severity = 'low';\nlet shouldRetry = false;\nlet retryCount = 0;\n\n// 에러 메시지 분석\nconst errorMessage = errorInfo.message || '';\nconst errorType = errorInfo.type || 'unknown';\n\n// 재시도 가능한 에러 유형 판단\nif (errorMessage.includes('timeout') || \n    errorMessage.includes('network') ||\n    errorMessage.includes('connection') ||\n    errorMessage.includes('rate limit')) {\n  severity = 'medium';\n  shouldRetry = true;\n} else if (errorMessage.includes('authentication') ||\n          errorMessage.includes('permission') ||\n          errorMessage.includes('not found')) {\n  severity = 'high';\n  shouldRetry = false;\n} else if (errorMessage.includes('syntax') ||\n          errorMessage.includes('invalid') ||\n          errorMessage.includes('malformed')) {\n  severity = 'high';\n  shouldRetry = false;\n}\n\n// 워크플로우 정적 데이터에서 재시도 횟수 확인\nconst staticData = $getWorkflowStaticData('global');\nconst retryKey = `retry_${executionInfo.id}`;\nretryCount = staticData[retryKey] || 0;\n\n// 최대 재시도 횟수 (3회)\nconst maxRetries = 3;\nif (retryCount >= maxRetries) {\n  shouldRetry = false;\n  severity = 'critical';\n}\n\nconst processedError = {\n  ...errorData,\n  analysis: {\n    severity: severity,\n    shouldRetry: shouldRetry,\n    retryCount: retryCount,\n    maxRetries: maxRetries,\n    errorCategory: getErrorCategory(errorMessage),\n    timestamp: new Date().toISOString()\n  }\n};\n\nfunction getErrorCategory(message) {\n  const categories = {\n    'network': ['timeout', 'connection', 'network', 'dns'],\n    'authentication': ['auth', 'permission', 'unauthorized', 'forbidden'],\n    'api_limit': ['rate limit', 'quota', 'limit exceeded'],\n    'data': ['not found', 'invalid', 'malformed', 'parse'],\n    'system': ['memory', 'disk', 'cpu', 'resource']\n  };\n  \n  for (const [category, keywords] of Object.entries(categories)) {\n    if (keywords.some(keyword => message.toLowerCase().includes(keyword))) {\n      return category;\n    }\n  }\n  return 'unknown';\n}\n\nconsole.log(`에러 분석 완료: ${severity} - 재시도: ${shouldRetry}`);\n\nreturn [{ json: processedError }];"
+      },
+      "id": "analyze-error",
+      "name": "Analyze Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-retry",
+              "leftValue": "={{ $json.analysis.shouldRetry }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-retry",
+      "name": "Should Retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.pow(2, $json.analysis.retryCount) * 60 }}",
+        "unit": "seconds"
+      },
+      "id": "wait-before-retry",
+      "name": "Wait Before Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 재시도 카운터 업데이트\nconst errorData = $json;\nconst executionInfo = errorData.execution;\nconst staticData = $getWorkflowStaticData('global');\n\nconst retryKey = `retry_${executionInfo.id}`;\nconst currentRetries = staticData[retryKey] || 0;\nstaticData[retryKey] = currentRetries + 1;\n\nconsole.log(`재시도 횟수 업데이트: ${currentRetries + 1}`);\n\nreturn [{ json: errorData }];"
+      },
+      "id": "update-retry-count",
+      "name": "Update Retry Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $json.workflow.id }}",
+        "waitForExecution": false
+      },
+      "id": "retry-workflow",
+      "name": "Retry Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "🔄 워크플로우 재시도\\n\\n📋 정보:\\n- 워크플로우: {{ $json.workflow.name }}\\n- 재시도 횟수: {{ $json.analysis.retryCount + 1 }}/{{ $json.analysis.maxRetries }}\\n- 에러 유형: {{ $json.analysis.errorCategory }}\\n\\n⏰ 시간: {{ $json.analysis.timestamp }}",
+        "otherOptions": {}
+      },
+      "id": "notify-retry",
+      "name": "Notify Retry",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 최종 실패 처리\nconst errorData = $json;\nconst severity = errorData.analysis.severity;\n\n// 심각도별 알림 메시지 구성\nlet alertLevel = '🔴';\nlet priority = 'high';\n\nif (severity === 'critical') {\n  alertLevel = '🚨';\n  priority = 'urgent';\n} else if (severity === 'high') {\n  alertLevel = '❌';\n  priority = 'high';\n} else {\n  alertLevel = '⚠️';\n  priority = 'medium';\n}\n\nconst finalError = {\n  ...errorData,\n  alert: {\n    level: alertLevel,\n    priority: priority,\n    requiresIntervention: severity !== 'low'\n  }\n};\n\nconsole.log(`최종 실패 처리: ${severity}`);\n\nreturn [{ json: finalError }];"
+      },
+      "id": "process-final-failure",
+      "name": "Process Final Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "{{ $json.alert.level }} 워크플로우 실패 (최종)\\n\\n📋 상세 정보:\\n- 워크플로우: {{ $json.workflow.name }}\\n- 실행 ID: {{ $json.execution.id }}\\n- 에러 메시지: {{ $json.error.message }}\\n- 에러 카테고리: {{ $json.analysis.errorCategory }}\\n- 심각도: {{ $json.analysis.severity }}\\n- 총 재시도 횟수: {{ $json.analysis.retryCount }}\\n\\n🔗 실행 링크: {{ $json.execution.url }}\\n\\n{{ $json.alert.requiresIntervention ? '⚠️ 수동 개입이 필요합니다' : 'ℹ️ 모니터링 중입니다' }}",
+        "otherOptions": {}
+      },
+      "id": "notify-final-failure",
+      "name": "Notify Final Failure",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-critical",
+              "leftValue": "={{ $json.analysis.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-critical",
+      "name": "Is Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "to": "{{ $env.ADMIN_EMAIL }}",
+        "subject": "🚨 Critical System Failure - {{ $json.workflow.name }}",
+        "emailFormat": "html",
+        "message": "<!DOCTYPE html>\\n<html>\\n<head>\\n    <style>\\n        .header { background-color: #ff4444; color: white; padding: 20px; }\\n        .content { padding: 20px; }\\n        .error-box { background-color: #fff5f5; border: 1px solid #fed7d7; padding: 15px; margin: 10px 0; }\\n        .action-required { background-color: #fef5e7; border: 1px solid #f6ad55; padding: 15px; margin: 10px 0; }\\n    </style>\\n</head>\\n<body>\\n    <div class=\\\"header\\\">\\n        <h1>🚨 Critical System Failure</h1>\\n    </div>\\n    <div class=\\\"content\\\">\\n        <h2>Workflow Information</h2>\\n        <ul>\\n            <li><strong>Workflow:</strong> {{ $json.workflow.name }}</li>\\n            <li><strong>Execution ID:</strong> {{ $json.execution.id }}</li>\\n            <li><strong>Failed At:</strong> {{ $json.analysis.timestamp }}</li>\\n            <li><strong>Total Retries:</strong> {{ $json.analysis.retryCount }}</li>\\n        </ul>\\n        \\n        <div class=\\\"error-box\\\">\\n            <h3>Error Details</h3>\\n            <p><strong>Message:</strong> {{ $json.error.message }}</p>\\n            <p><strong>Category:</strong> {{ $json.analysis.errorCategory }}</p>\\n            <p><strong>Node:</strong> {{ $json.error.node?.name || 'Unknown' }}</p>\\n        </div>\\n        \\n        <div class=\\\"action-required\\\">\\n            <h3>⚠️ Immediate Action Required</h3>\\n            <p>This is a critical system failure that requires immediate attention.</p>\\n            <a href=\\\"{{ $json.execution.url }}\\\" style=\\\"background-color: #4299e1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;\\\">View Execution</a>\\n        </div>\\n    </div>\\n</body>\\n</html>",
+        "options": {}
+      },
+      "id": "send-critical-email",
+      "name": "Send Critical Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1500,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 에러 통계 업데이트\nconst errorData = $json;\nconst staticData = $getWorkflowStaticData('global');\n\n// 에러 통계 초기화\nif (!staticData.errorStats) {\n  staticData.errorStats = {\n    totalErrors: 0,\n    errorsByCategory: {},\n    errorsBySeverity: {},\n    lastUpdated: new Date().toISOString()\n  };\n}\n\n// 통계 업데이트\nstaticData.errorStats.totalErrors++;\nstaticData.errorStats.lastUpdated = new Date().toISOString();\n\nconst category = errorData.analysis.errorCategory;\nconst severity = errorData.analysis.severity;\n\nstaticData.errorStats.errorsByCategory[category] = \n  (staticData.errorStats.errorsByCategory[category] || 0) + 1;\n  \nstaticData.errorStats.errorsBySeverity[severity] = \n  (staticData.errorStats.errorsBySeverity[severity] || 0) + 1;\n\nconsole.log('에러 통계 업데이트 완료');\n\nreturn [{ json: { ...errorData, stats: staticData.errorStats } }];"
+      },
+      "id": "update-error-stats",
+      "name": "Update Error Statistics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Analyze Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Error": {
+      "main": [
+        [
+          {
+            "node": "Should Retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Retry?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Final Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Retry": {
+      "main": [
+        [
+          {
+            "node": "Update Retry Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Retry Count": {
+      "main": [
+        [
+          {
+            "node": "Retry Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Workflow": {
+      "main": [
+        [
+          {
+            "node": "Notify Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Final Failure": {
+      "main": [
+        [
+          {
+            "node": "Notify Final Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Final Failure": {
+      "main": [
+        [
+          {
+            "node": "Is Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Critical?": {
+      "main": [
+        [
+          {
+            "node": "Send Critical Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Error Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Critical Email": {
+      "main": [
+        [
+          {
+            "node": "Update Error Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-06-23T21:40:00.000Z",
+  "updatedAt": "2025-06-23T21:40:00.000Z",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {},
+  "tags": ["error-handling", "monitoring", "automation"]
+}

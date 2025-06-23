@@ -22,6 +22,11 @@ class Config:
     COUPANG_ACCESS_KEY: str = os.getenv("COUPANG_ACCESS_KEY", "")
     COUPANG_SECRET_KEY: str = os.getenv("COUPANG_SECRET_KEY", "")
     
+    # Google Sheets API 설정
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
+    GOOGLE_SHEETS_ID: str = os.getenv("GOOGLE_SHEETS_ID", "")
+    GOOGLE_SHEETS_SCOPE: list = ["https://www.googleapis.com/auth/spreadsheets"]
+    
     # Whisper 모델 설정
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "small")
     
@@ -31,9 +36,28 @@ class Config:
     GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
     GEMINI_TIMEOUT: int = int(os.getenv("GEMINI_TIMEOUT", "60"))
     
+    # Gemini API 키 로테이션 설정
+    GEMINI_API_KEYS: list = [key.strip() for key in os.getenv("GEMINI_API_KEYS", os.getenv("GOOGLE_API_KEY", "")).split(",") if key.strip()]
+    GEMINI_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("GEMINI_RATE_LIMIT_PER_MINUTE", "60"))
+    GEMINI_RATE_LIMIT_PER_DAY: int = int(os.getenv("GEMINI_RATE_LIMIT_PER_DAY", "1500"))
+    GEMINI_RETRY_DELAYS: list = [1, 2, 4, 8, 16]  # 지수 백오프
+    
     # 파일 경로 설정
     TEMP_DIR: Path = Path(os.getenv("TEMP_DIR", "/tmp/influence_item"))
     PROJECT_ROOT: Path = Path(__file__).parent
+    
+    # SSL/TLS 설정
+    SSL_CERT_PATH: str = os.getenv("SSL_CERT_PATH", "/etc/ssl/certs/server.crt")
+    SSL_KEY_PATH: str = os.getenv("SSL_KEY_PATH", "/etc/ssl/private/server.key")
+    SSL_CA_PATH: str = os.getenv("SSL_CA_PATH", "/etc/ssl/certs/ca.crt")
+    USE_SSL: bool = os.getenv("USE_SSL", "false").lower() == "true"
+    SSL_VERIFY: bool = os.getenv("SSL_VERIFY", "true").lower() == "true"
+    
+    # 서버 및 네트워크 설정
+    DOMAIN_NAME: str = os.getenv("DOMAIN_NAME", "localhost")
+    GPU_SERVER_URL: str = os.getenv("GPU_SERVER_URL", "http://localhost:8001")
+    CPU_SERVER_URL: str = os.getenv("CPU_SERVER_URL", "http://localhost:8501")
+    API_SERVER_PORT: int = int(os.getenv("API_SERVER_PORT", "8000"))
     
     # 로깅 설정
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

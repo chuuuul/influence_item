@@ -81,18 +81,28 @@ class OCRProcessor:
             self.logger.info(f"EasyOCR 모델 로드 시작: 언어={self.languages}")
             start_time = time.time()
             
-            # GPU 사용 가능 여부 확인
-            gpu_available = hasattr(self.config, 'USE_GPU') and self.config.USE_GPU
+            # GPU 사용 가능 여부 확인 (GPU Optimizer 우선 적용)
+            gpu_available = False
+            if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available:
+                gpu_available = True
+                self.logger.info("EasyOCR GPU 모드 활성화")
+            elif hasattr(self.config, 'USE_GPU') and self.config.USE_GPU:
+                gpu_available = True
+                self.logger.info("EasyOCR GPU 모드 활성화 (config 설정)")
+            else:
+                self.logger.info("EasyOCR CPU 모드로 실행")
             
-            # EasyOCR Reader 초기화
+            # EasyOCR Reader 초기화 (다국어 지원 강화)
             self.reader = easyocr.Reader(
                 self.languages, 
                 gpu=gpu_available,
-                verbose=False  # 불필요한 출력 억제
+                verbose=False,  # 불필요한 출력 억제
+                download_enabled=True  # 필요한 모델 자동 다운로드
             )
             
             load_time = time.time() - start_time
-            self.logger.info(f"EasyOCR 모델 로드 완료 - 소요시간: {load_time:.2f}초")
+            device_info = "GPU" if gpu_available else "CPU"
+            self.logger.info(f"EasyOCR 모델 로드 완료 ({device_info}) - 소요시간: {load_time:.2f}초")
             
         except Exception as e:
             self.logger.error(f"EasyOCR 모델 로드 실패: {str(e)}")

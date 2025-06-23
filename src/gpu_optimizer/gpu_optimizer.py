@@ -148,6 +148,10 @@ class GPUOptimizer:
         
         self.logger.info(f"GPU 최적화 시스템 초기화 완료 - 디바이스: {self.device}, GPU 개수: {self.device_count}")
     
+    def is_gpu_available(self) -> bool:
+        """GPU 사용 가능 여부 확인"""
+        return self.has_cuda
+    
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
@@ -198,8 +202,60 @@ class GPUOptimizer:
             
             self.logger.info("GPU 설정 최적화 완료")
             
+            # 배치 처리 설정 최적화
+            self._setup_batch_processing()
+            
         except Exception as e:
             self.logger.warning(f"GPU 설정 중 오류 발생: {str(e)}")
+    
+    def _setup_batch_processing(self) -> None:
+        """배치 처리 설정 최적화"""
+        if not self.has_cuda:
+            return
+        
+        try:
+            # 배치 크기 설정
+            available_memory = self.get_memory_info()['free']
+            if available_memory > 8 * 1024:  # 8GB 이상
+                self.optimal_batch_size = 32
+            elif available_memory > 4 * 1024:  # 4GB 이상
+                self.optimal_batch_size = 16
+            else:
+                self.optimal_batch_size = 8
+            
+            self.logger.info(f"최적 배치 크기 설정: {self.optimal_batch_size}")
+            
+        except Exception as e:
+            self.optimal_batch_size = 8
+            self.logger.warning(f"배치 처리 설정 실패, 기본값 사용: {str(e)}")
+    
+    def process_batch(self, items: List[Any], process_func, batch_size: Optional[int] = None) -> List[Any]:
+        """배치 처리를 통한 효율적인 처리"""
+        if not items:
+            return []
+        
+        batch_size = batch_size or getattr(self, 'optimal_batch_size', 8)
+        results = []
+        
+        try:
+            for i in range(0, len(items), batch_size):
+                batch = items[i:i + batch_size]
+                
+                with self.memory_context():
+                    batch_results = process_func(batch)
+                    results.extend(batch_results)
+                
+                # 배치 간 메모리 정리
+                if self.has_cuda:
+                    torch.cuda.empty_cache()
+                gc.collect()
+            
+            self.logger.info(f"배치 처리 완료: {len(items)}개 항목, 배치 크기: {batch_size}")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"배치 처리 중 오류 발생: {str(e)}")
+            raise
     
     def get_memory_info(self, device_id: int = 0) -> Dict[str, Any]:
         """GPU 메모리 정보 조회"""
@@ -523,6 +579,12 @@ class GPUOptimizer:
             self.logger.error(f"GPU 모델 로딩 실패: {str(e)}")
             self.fallback_to_cpu()
             return None
+    
+    @contextmanager
+    def memory_context(self):
+        """메모리 관리 컨텍스트 매니저 (별칭)"""
+        with self.gpu_memory_context():
+            yield
     
     def __enter__(self):
         """컨텍스트 매니저 진입"""

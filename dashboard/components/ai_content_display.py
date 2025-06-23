@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 import pyperclip
 import os
+import uuid
 from typing import Dict, List, Any, Optional
 
 def extract_ai_content_from_json_schema(candidate_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -40,29 +41,629 @@ def extract_ai_content_from_json_schema(candidate_data: Dict[str, Any]) -> Dict[
     }
 
 def copy_to_clipboard_with_feedback(text: str, content_type: str = "텍스트") -> None:
-    """클립보드 복사 및 피드백 표시"""
+    """향상된 클립보드 복사 및 토스트 피드백 표시"""
     try:
-        # JavaScript를 통한 클립보드 API 사용 (Streamlit 환경에서 더 안정적)
-        st.write(f"""
+        # 텍스트 전처리 (특수문자 및 줄바꿈 처리)
+        safe_text = text.replace('`', '\\`').replace('\n', '\\n').replace('\r', '').replace('"', '\\"')
+        
+        # 향상된 JavaScript 클립보드 API 사용
+        st.markdown(f"""
         <script>
-        navigator.clipboard.writeText(`{text.replace('`', '\\`')}`).then(function() {{
-            console.log('복사 성공: {content_type}');
-        }}).catch(function(err) {{
-            console.error('복사 실패: ', err);
-        }});
+        // 클립보드 복사 함수
+        async function copyToClipboard(text, contentType) {{
+            try {{
+                // 최신 브라우저의 Clipboard API 사용
+                if (navigator.clipboard && window.isSecureContext) {{
+                    await navigator.clipboard.writeText(text);
+                    showToast('✅ ' + contentType + ' 복사 완료!', 'success');
+                }} else {{
+                    // 레거시 브라우저 지원
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    try {{
+                        const successful = document.execCommand('copy');
+                        if (successful) {{
+                            showToast('✅ ' + contentType + ' 복사 완료!', 'success');
+                        }} else {{
+                            throw new Error('execCommand failed');
+                        }}
+                    }} catch (err) {{
+                        showToast('⚠️ 복사 실패. 수동으로 복사해주세요.', 'warning');
+                    }} finally {{
+                        document.body.removeChild(textArea);
+                    }}
+                }}
+            }} catch (err) {{
+                console.error('복사 실패:', err);
+                showToast('⚠️ 복사 실패. 브라우저가 지원하지 않습니다.', 'error');
+            }}
+        }}
+        
+        // 토스트 알림 표시 함수
+        function showToast(message, type = 'info') {{
+            // 기존 토스트 제거
+            const existingToast = document.querySelector('.ai-content-toast');
+            if (existingToast) {{
+                existingToast.remove();
+            }}
+            
+            // 토스트 엘리먼트 생성
+            const toast = document.createElement('div');
+            toast.className = 'ai-content-toast ai-toast-' + type;
+            toast.innerHTML = message;
+            
+            // 토스트 스타일 적용
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: ${{type === 'success' ? '#d4edda' : type === 'warning' ? '#fff3cd' : type === 'error' ? '#f8d7da' : '#d1ecf1'}};
+                color: ${{type === 'success' ? '#155724' : type === 'warning' ? '#856404' : type === 'error' ? '#721c24' : '#0c5460'}};
+                border: 1px solid ${{type === 'success' ? '#c3e6cb' : type === 'warning' ? '#ffeaa7' : type === 'error' ? '#f5c6cb' : '#bee5eb'}};
+                padding: 12px 20px;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 9999;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                font-size: 14px;
+                font-weight: 500;
+                max-width: 300px;
+                animation: slideInRight 0.3s ease-out;
+            `;
+            
+            // 애니메이션 키프레임 추가
+            if (!document.querySelector('#toast-animations')) {{
+                const style = document.createElement('style');
+                style.id = 'toast-animations';
+                style.textContent = `
+                    @keyframes slideInRight {{
+                        from {{ transform: translateX(100%); opacity: 0; }}
+                        to {{ transform: translateX(0); opacity: 1; }}
+                    }}
+                    @keyframes slideOutRight {{
+                        from {{ transform: translateX(0); opacity: 1; }}
+                        to {{ transform: translateX(100%); opacity: 0; }}
+                    }}
+                `;
+                document.head.appendChild(style);
+            }}
+            
+            // 토스트 표시
+            document.body.appendChild(toast);
+            
+            // 3초 후 자동 제거
+            setTimeout(() => {{
+                toast.style.animation = 'slideOutRight 0.3s ease-in';
+                setTimeout(() => {{
+                    if (toast.parentNode) {{
+                        toast.parentNode.removeChild(toast);
+                    }}
+                }}, 300);
+            }}, 3000);
+        }}
+        
+        // 복사 실행
+        copyToClipboard(`{safe_text}`, `{content_type}`);
         </script>
         """, unsafe_allow_html=True)
         
-        # 백업: pyperclip 사용
-        pyperclip.copy(text)
-        st.success(f"✅ {content_type}이(가) 복사되었습니다!")
+        # 백업: pyperclip 사용 (서버 사이드)
+        try:
+            pyperclip.copy(text)
+        except:
+            pass  # pyperclip 실패해도 JavaScript 버전이 있으므로 계속 진행
+        
+        # 세션 스테이트에 복사 기록 저장
+        if 'clipboard_history' not in st.session_state:
+            st.session_state.clipboard_history = []
+        
+        st.session_state.clipboard_history.append({
+            'content': text[:100] + "..." if len(text) > 100 else text,
+            'type': content_type,
+            'timestamp': datetime.now().isoformat(),
+            'length': len(text)
+        })
+        
+        # 기록은 최대 10개까지만 유지
+        if len(st.session_state.clipboard_history) > 10:
+            st.session_state.clipboard_history = st.session_state.clipboard_history[-10:]
         
     except Exception as e:
-        # 세션 스테이트에 저장
+        # 완전한 실패 상황 - 세션 스테이트에만 저장
         if 'clipboard_content' not in st.session_state:
             st.session_state.clipboard_content = {}
         st.session_state.clipboard_content[content_type] = text
-        st.info(f"💾 {content_type}이(가) 임시 저장되었습니다. (복사 기능 제한)")
+        
+        st.error(f"❌ {content_type} 복사에 실패했습니다. 수동으로 복사해주세요.")
+        st.code(text)
+
+def save_content_edit_history(content_id: str, content_type: str, original_content: str, edited_content: str, edit_reason: str = "") -> None:
+    """콘텐츠 수정 이력 저장"""
+    if 'content_edit_history' not in st.session_state:
+        st.session_state.content_edit_history = {}
+    
+    if content_id not in st.session_state.content_edit_history:
+        st.session_state.content_edit_history[content_id] = []
+    
+    edit_record = {
+        'edit_id': str(uuid.uuid4()),
+        'timestamp': datetime.now().isoformat(),
+        'content_type': content_type,
+        'original_content': original_content,
+        'edited_content': edited_content,
+        'edit_reason': edit_reason,
+        'char_diff': len(edited_content) - len(original_content)
+    }
+    
+    st.session_state.content_edit_history[content_id].append(edit_record)
+    
+    # 최대 20개 기록까지만 유지
+    if len(st.session_state.content_edit_history[content_id]) > 20:
+        st.session_state.content_edit_history[content_id] = st.session_state.content_edit_history[content_id][-20:]
+
+def render_inline_editor(content_id: str, content_type: str, original_content: str, 
+                        placeholder: str = "", max_length: int = 2000, height: int = 100) -> str:
+    """인라인 편집 컴포넌트"""
+    
+    # 세션 스테이트에서 편집된 콘텐츠 가져오기
+    edit_key = f"edited_{content_id}_{content_type}"
+    if edit_key not in st.session_state:
+        st.session_state[edit_key] = original_content
+    
+    # 편집 모드 토글
+    edit_mode_key = f"edit_mode_{content_id}_{content_type}"
+    if edit_mode_key not in st.session_state:
+        st.session_state[edit_mode_key] = False
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        if st.session_state[edit_mode_key]:
+            # 편집 모드
+            if content_type in ['title', 'hook']:
+                edited_content = st.text_input(
+                    f"{content_type} 편집",
+                    value=st.session_state[edit_key],
+                    placeholder=placeholder,
+                    max_chars=max_length,
+                    key=f"editor_{content_id}_{content_type}",
+                    label_visibility="collapsed"
+                )
+            else:
+                edited_content = st.text_area(
+                    f"{content_type} 편집", 
+                    value=st.session_state[edit_key],
+                    placeholder=placeholder,
+                    max_chars=max_length,
+                    height=height,
+                    key=f"editor_{content_id}_{content_type}",
+                    label_visibility="collapsed"
+                )
+            
+            # 실시간 글자 수 체크
+            char_count = len(edited_content)
+            if char_count > max_length * 0.9:
+                st.warning(f"⚠️ {char_count}/{max_length}자 (한계에 근접)")
+            else:
+                st.info(f"📝 {char_count}/{max_length}자")
+            
+        else:
+            # 읽기 모드
+            if content_type in ['title', 'hook']:
+                st.markdown(f"**{st.session_state[edit_key]}**")
+            else:
+                st.text_area(
+                    "",
+                    value=st.session_state[edit_key],
+                    height=height,
+                    disabled=True,
+                    key=f"display_{content_id}_{content_type}",
+                    label_visibility="collapsed"
+                )
+    
+    with col2:
+        if st.session_state[edit_mode_key]:
+            # 편집 모드 버튼들
+            if st.button("💾 저장", key=f"save_{content_id}_{content_type}", use_container_width=True, type="primary"):
+                # 변경사항이 있으면 이력 저장
+                if st.session_state[edit_key] != original_content:
+                    save_content_edit_history(
+                        content_id, content_type, 
+                        original_content, st.session_state[edit_key],
+                        "수동 편집"
+                    )
+                st.session_state[edit_mode_key] = False
+                st.success(f"✅ {content_type} 저장됨")
+                st.rerun()
+            
+            if st.button("❌ 취소", key=f"cancel_{content_id}_{content_type}", use_container_width=True):
+                st.session_state[edit_key] = original_content
+                st.session_state[edit_mode_key] = False
+                st.rerun()
+            
+            if st.button("🔄 원본복원", key=f"reset_{content_id}_{content_type}", use_container_width=True):
+                st.session_state[edit_key] = original_content
+                st.info("원본으로 복원됨")
+                st.rerun()
+        
+        else:
+            # 읽기 모드 버튼들
+            if st.button("✏️ 편집", key=f"edit_{content_id}_{content_type}", use_container_width=True):
+                st.session_state[edit_mode_key] = True
+                st.rerun()
+            
+            if st.button("📋 복사", key=f"copy_{content_id}_{content_type}", use_container_width=True, type="primary"):
+                copy_to_clipboard_with_feedback(st.session_state[edit_key], content_type)
+    
+    return st.session_state[edit_key]
+
+def render_edit_history_sidebar(content_id: str) -> None:
+    """수정 이력 사이드바 표시"""
+    if 'content_edit_history' not in st.session_state or content_id not in st.session_state.content_edit_history:
+        st.info("수정 이력이 없습니다.")
+        return
+    
+    history = st.session_state.content_edit_history[content_id]
+    
+    st.markdown("### 📋 수정 이력")
+    
+    for i, record in enumerate(reversed(history[-5:]), 1):  # 최근 5개만 표시
+        with st.expander(f"{i}. {record['content_type']} ({record['timestamp'][:16]})"):
+            st.markdown(f"**변경 이유:** {record['edit_reason']}")
+            st.markdown(f"**글자 수 변화:** {record['char_diff']:+d}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**원본:**")
+                st.code(record['original_content'][:100] + "..." if len(record['original_content']) > 100 else record['original_content'])
+            
+            with col2:
+                st.markdown("**수정 후:**")  
+                st.code(record['edited_content'][:100] + "..." if len(record['edited_content']) > 100 else record['edited_content'])
+
+def render_content_templates_panel() -> Dict[str, str]:
+    """콘텐츠 템플릿 패널"""
+    st.markdown("### 🎨 템플릿")
+    
+    templates = {
+        "인플루언서 스타일": {
+            "title": "{celebrity}이 실제로 쓰는 {product}! 😍",
+            "caption": "{celebrity}님이 영상에서 실제로 사용하는 모습을 보고 너무 궁금해서 찾아봤어요! ✨\n\n이 제품의 특징:\n• 실제 사용 모습 공개\n• 자연스러운 추천\n• 믿을만한 후기\n\n지금 쿠팡에서 확인해보세요! 🛒",
+            "hashtags": ["#{celebrity}", "#{celebrity}템", "#연예인추천", "#뷰티템", "#인기템"]
+        },
+        "정보 중심형": {
+            "title": "{product} 상세 정보 및 구매 가이드",
+            "caption": "{celebrity}님이 사용한 {product}에 대한 상세 정보를 정리해드려요.\n\n제품 특징:\n• 브랜드: {brand}\n• 카테고리: {category}\n• 가격대: {price}\n\n구매 링크는 프로필에서 확인하세요! 📎",
+            "hashtags": ["#제품정보", "#구매가이드", "#{category}", "#추천템", "#정보공유"]
+        },
+        "감성적 스타일": {
+            "title": "요즘 내가 푹 빠진 {product} 💕",
+            "caption": "{celebrity}님이 쓰는 걸 보고 나도 모르게 주문했던 {product} 💕\n\n써보니까 정말 좋더라구요!\n특히 이런 점이 마음에 들어요:\n✨ {feature1}\n✨ {feature2}\n\n같이 써보실 분들 있나요? 🤗",
+            "hashtags": ["#일상", "#추천템", "#좋아요", "#공유", "#{product}"]
+        }
+    }
+    
+    template_name = st.selectbox(
+        "템플릿 선택",
+        ["사용자 정의"] + list(templates.keys()),
+        key="template_selector"
+    )
+    
+    if template_name != "사용자 정의":
+        template = templates[template_name]
+        
+        st.markdown("**미리보기:**")
+        st.info(f"제목: {template['title']}")
+        st.info(f"캡션: {template['caption'][:100]}...")
+        st.info(f"해시태그: {' '.join(template['hashtags'][:3])}...")
+        
+        if st.button("📋 템플릿 적용", key="apply_template", use_container_width=True):
+            return template
+    
+    return {}
+
+def render_enhanced_ai_content_management(candidate_data: Dict[str, Any]) -> None:
+    """
+    향상된 AI 콘텐츠 관리 인터페이스 - T01_S02_M02 구현
+    PRD SPEC-DASH-03 요구사항에 따른 완전한 AI 콘텐츠 관리 시스템
+    """
+    st.markdown("## 🤖 AI 콘텐츠 관리 인터페이스 v2.0")
+    
+    # AI 콘텐츠 추출
+    ai_content = extract_ai_content_from_json_schema(candidate_data)
+    
+    # 데이터 검증
+    has_content = any([
+        ai_content.get('recommended_titles'),
+        ai_content.get('recommended_hashtags'),
+        ai_content.get('summary_for_caption'),
+        ai_content.get('hook_sentence')
+    ])
+    
+    if not has_content:
+        render_empty_state()
+        return
+    
+    # 콘텐츠 ID 생성 (영상별 고유 ID)
+    content_id = candidate_data.get('source_info', {}).get('video_url', 'unknown').split('=')[-1][:8]
+    
+    # 소스 정보 표시
+    if 'source_info' in candidate_data:
+        source_info = candidate_data['source_info']
+        st.info(f"""
+        🎬 **소스 정보**  
+        연예인: {source_info.get('celebrity_name', 'N/A')} | 
+        채널: {source_info.get('channel_name', 'N/A')} | 
+        영상: {source_info.get('video_title', 'N/A')[:50]}...
+        """)
+    
+    # 메인 레이아웃: 컨텐츠 관리 + 사이드바
+    col_main, col_sidebar = st.columns([3, 1])
+    
+    with col_main:
+        # 탭 구성: 편집 인터페이스
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📝 제목 관리", "#️⃣ 해시태그 관리", "📖 캡션 관리", "🎣 후크 관리", "🎯 통합 미리보기"
+        ])
+        
+        with tab1:
+            st.markdown("### 📝 제목 관리")
+            titles = ai_content.get('recommended_titles', [])
+            
+            if titles:
+                # 다중 제목 선택 및 편집
+                for i, title in enumerate(titles):
+                    st.markdown(f"**제목 옵션 {i+1}:**")
+                    edited_title = render_inline_editor(
+                        content_id, f"title_{i}", title, 
+                        "제목을 입력하세요...", 100, 50
+                    )
+                
+                # 커스텀 제목 추가
+                st.markdown("---")
+                st.markdown("**새 제목 추가:**")
+                render_inline_editor(
+                    content_id, "custom_title", "", 
+                    "새로운 제목을 입력하세요...", 100, 50
+                )
+            else:
+                st.warning("⚠️ AI 생성 제목이 없습니다.")
+        
+        with tab2:
+            st.markdown("### #️⃣ 해시태그 관리")
+            hashtags = ai_content.get('recommended_hashtags', [])
+            
+            if hashtags:
+                # 해시태그 편집
+                hashtag_text = " ".join(hashtags)
+                edited_hashtags = render_inline_editor(
+                    content_id, "hashtags", hashtag_text,
+                    "해시태그를 입력하세요 (#태그1 #태그2 형식)", 500, 100
+                )
+                
+                # 해시태그 유효성 검사
+                parsed_hashtags = re.findall(r'#[^\s#]+', edited_hashtags)
+                if len(parsed_hashtags) != len(edited_hashtags.split()):
+                    st.warning("⚠️ 해시태그는 #을 포함해야 하며 공백으로 구분해주세요.")
+                
+                st.info(f"📊 해시태그 개수: {len(parsed_hashtags)} | 총 글자수: {len(edited_hashtags)}")
+            else:
+                st.warning("⚠️ AI 생성 해시태그가 없습니다.")
+        
+        with tab3:
+            st.markdown("### 📖 캡션 관리")
+            caption = ai_content.get('summary_for_caption', '')
+            
+            if caption:
+                edited_caption = render_inline_editor(
+                    content_id, "caption", caption,
+                    "캡션을 입력하세요...", 2000, 200
+                )
+                
+                # 캡션 분석
+                lines = edited_caption.split('\n')
+                words = len(edited_caption.split())
+                st.info(f"📊 줄 수: {len(lines)} | 단어 수: {words} | 글자 수: {len(edited_caption)}")
+            else:
+                st.warning("⚠️ AI 생성 캡션이 없습니다.")
+        
+        with tab4:
+            st.markdown("### 🎣 후크 문장 관리")
+            hook = ai_content.get('hook_sentence', '')
+            
+            if hook:
+                edited_hook = render_inline_editor(
+                    content_id, "hook", hook,
+                    "후크 문장을 입력하세요...", 200, 80
+                )
+            else:
+                st.warning("⚠️ 후크 문장이 없습니다.")
+        
+        with tab5:
+            st.markdown("### 🎯 통합 미리보기")
+            
+            # 최종 편집된 콘텐츠 수집
+            final_content = {}
+            
+            # 제목들 수집
+            titles = ai_content.get('recommended_titles', [])
+            final_titles = []
+            for i in range(len(titles)):
+                title_key = f"edited_{content_id}_title_{i}"
+                if title_key in st.session_state:
+                    final_titles.append(st.session_state[title_key])
+            
+            # 커스텀 제목
+            custom_title_key = f"edited_{content_id}_custom_title"
+            if custom_title_key in st.session_state and st.session_state[custom_title_key]:
+                final_titles.append(st.session_state[custom_title_key])
+            
+            # 해시태그
+            hashtags_key = f"edited_{content_id}_hashtags"
+            final_hashtags = st.session_state.get(hashtags_key, " ".join(ai_content.get('recommended_hashtags', [])))
+            
+            # 캡션
+            caption_key = f"edited_{content_id}_caption"
+            final_caption = st.session_state.get(caption_key, ai_content.get('summary_for_caption', ''))
+            
+            # 후크
+            hook_key = f"edited_{content_id}_hook"
+            final_hook = st.session_state.get(hook_key, ai_content.get('hook_sentence', ''))
+            
+            # 미리보기 표시
+            st.markdown("**📱 SNS 포스트 미리보기:**")
+            
+            with st.container():
+                st.markdown("""
+                <div style="border: 2px solid #e1e1e1; border-radius: 10px; padding: 20px; margin: 10px 0;">
+                """, unsafe_allow_html=True)
+                
+                # 제목 선택
+                if final_titles:
+                    selected_title = st.selectbox("사용할 제목 선택:", final_titles, key="preview_title_select")
+                    st.markdown(f"### {selected_title}")
+                
+                # 후크 문장 표시
+                if final_hook:
+                    st.markdown(f"*{final_hook}*")
+                    st.markdown("")
+                
+                # 캡션 표시
+                if final_caption:
+                    st.markdown(final_caption)
+                    st.markdown("")
+                
+                # 해시태그 표시
+                if final_hashtags:
+                    st.markdown(f"**{final_hashtags}**")
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+            # 통합 액션 버튼들
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📋 전체 복사", key="copy_integrated", use_container_width=True, type="primary"):
+                    complete_content = ""
+                    if final_titles and 'selected_title' in locals():
+                        complete_content += f"{selected_title}\n\n"
+                    if final_hook:
+                        complete_content += f"{final_hook}\n\n"
+                    if final_caption:
+                        complete_content += f"{final_caption}\n\n"
+                    if final_hashtags:
+                        complete_content += final_hashtags
+                    
+                    copy_to_clipboard_with_feedback(complete_content, "통합 콘텐츠")
+            
+            with col2:
+                if st.button("💾 콘텐츠 저장", key="save_integrated", use_container_width=True):
+                    # 세션 스테이트에 최종 콘텐츠 저장
+                    if 'saved_integrated_content' not in st.session_state:
+                        st.session_state.saved_integrated_content = {}
+                    
+                    st.session_state.saved_integrated_content[content_id] = {
+                        'titles': final_titles,
+                        'hashtags': final_hashtags,
+                        'caption': final_caption,
+                        'hook': final_hook,
+                        'saved_at': datetime.now().isoformat()
+                    }
+                    st.success("✅ 통합 콘텐츠가 저장되었습니다!")
+            
+            with col3:
+                # JSON 내보내기
+                export_data = {
+                    'content_id': content_id,
+                    'source_info': candidate_data.get('source_info', {}),
+                    'edited_content': {
+                        'titles': final_titles,
+                        'hashtags': final_hashtags,
+                        'caption': final_caption,
+                        'hook': final_hook
+                    },
+                    'export_timestamp': datetime.now().isoformat()
+                }
+                
+                json_str = json.dumps(export_data, ensure_ascii=False, indent=2)
+                st.download_button(
+                    label="📤 JSON 내보내기",
+                    data=json_str,
+                    file_name=f"ai_content_{content_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    key="export_integrated",
+                    use_container_width=True
+                )
+    
+    with col_sidebar:
+        # 사이드바: 템플릿, 이력, 도구
+        st.markdown("### 🛠️ 관리 도구")
+        
+        # 템플릿 패널
+        with st.expander("🎨 템플릿 적용", expanded=False):
+            template = render_content_templates_panel()
+            if template:
+                st.success("템플릿이 적용되었습니다!")
+                # 템플릿 적용 로직은 향후 구현
+        
+        # 수정 이력
+        with st.expander("📋 수정 이력", expanded=False):
+            render_edit_history_sidebar(content_id)
+        
+        # 복사 이력
+        with st.expander("📎 복사 이력", expanded=False):
+            if 'clipboard_history' in st.session_state and st.session_state.clipboard_history:
+                st.markdown("**최근 복사한 항목:**")
+                for i, item in enumerate(reversed(st.session_state.clipboard_history[-5:]), 1):
+                    st.markdown(f"**{i}.** {item['type']} ({item['timestamp'][:16]})")
+                    st.code(item['content'][:50] + "..." if len(item['content']) > 50 else item['content'])
+            else:
+                st.info("복사 이력이 없습니다.")
+        
+        # 유효성 검사 결과
+        with st.expander("✅ 유효성 검사", expanded=False):
+            validation_results = []
+            
+            # 제목 검사
+            if final_titles:
+                for i, title in enumerate(final_titles):
+                    if len(title) > 100:
+                        validation_results.append(f"⚠️ 제목 {i+1}: 너무 길음 ({len(title)}자)")
+                    elif len(title) < 10:
+                        validation_results.append(f"⚠️ 제목 {i+1}: 너무 짧음 ({len(title)}자)")
+                    else:
+                        validation_results.append(f"✅ 제목 {i+1}: 적절함")
+            
+            # 해시태그 검사
+            if final_hashtags:
+                hashtag_count = len(re.findall(r'#[^\s#]+', final_hashtags))
+                if hashtag_count > 20:
+                    validation_results.append(f"⚠️ 해시태그: 너무 많음 ({hashtag_count}개)")
+                elif hashtag_count < 3:
+                    validation_results.append(f"⚠️ 해시태그: 너무 적음 ({hashtag_count}개)")
+                else:
+                    validation_results.append(f"✅ 해시태그: 적절함 ({hashtag_count}개)")
+            
+            # 캡션 검사
+            if final_caption:
+                if len(final_caption) > 2000:
+                    validation_results.append(f"⚠️ 캡션: 너무 길음 ({len(final_caption)}자)")
+                elif len(final_caption) < 50:
+                    validation_results.append(f"⚠️ 캡션: 너무 짧음 ({len(final_caption)}자)")
+                else:
+                    validation_results.append(f"✅ 캡션: 적절함 ({len(final_caption)}자)")
+            
+            for result in validation_results:
+                st.markdown(result)
+            
+            if not validation_results:
+                st.info("검사할 콘텐츠가 없습니다.")
 
 def render_ai_titles_section(ai_content: Dict[str, Any]) -> None:
     """AI 생성 제목 목록 표시 및 개별 복사 기능"""
@@ -726,39 +1327,186 @@ def render_ai_content_display(product_data):
             st.session_state.saved_content = {}
             st.rerun()
 
-# 모바일 환경에서의 복사 기능 최적화
-def render_mobile_optimized_copy_section() -> None:
-    """모바일 터치 인터페이스 최적화"""
-    if st.session_state.get('is_mobile', False):
-        st.markdown("""
-        <style>
+def add_responsive_mobile_styles() -> None:
+    """반응형 모바일 스타일 추가"""
+    st.markdown("""
+    <style>
+    /* 모바일 반응형 스타일 */
+    @media (max-width: 768px) {
         .stButton > button {
             height: 3rem;
             font-size: 1.1rem;
             border-radius: 0.5rem;
+            width: 100% !important;
+            margin-bottom: 0.5rem;
         }
-        .mobile-copy-zone {
-            padding: 1rem;
-            background-color: #f0f2f6;
-            border-radius: 0.5rem;
-            margin: 0.5rem 0;
+        
+        .ai-content-toast {
+            max-width: 90% !important;
+            left: 5% !important;
+            right: 5% !important;
+            font-size: 12px !important;
         }
-        </style>
-        """, unsafe_allow_html=True)
+        
+        .element-container {
+            margin-bottom: 1rem;
+        }
+        
+        .stTabs [data-baseweb="tab-list"] {
+            flex-wrap: wrap;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            font-size: 0.9rem;
+            padding: 0.5rem;
+        }
+        
+        .stTextArea textarea {
+            font-size: 16px; /* iOS zoom 방지 */
+        }
+        
+        .stTextInput input {
+            font-size: 16px; /* iOS zoom 방지 */
+        }
+    }
+    
+    /* 태블릿 스타일 */
+    @media (min-width: 769px) and (max-width: 1024px) {
+        .stColumns {
+            gap: 1rem;
+        }
+        
+        .stButton > button {
+            height: 2.5rem;
+        }
+    }
+    
+    /* 데스크톱 스타일 */
+    @media (min-width: 1025px) {
+        .ai-content-management {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+    }
+    
+    /* 공통 개선 사항 */
+    .stExpander {
+        border: 1px solid #e1e1e1;
+        border-radius: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .stExpander > div > div {
+        padding: 0.5rem;
+    }
+    
+    /* 복사 버튼 스타일 개선 */
+    .copy-button {
+        background: linear-gradient(90deg, #1f77b4, #17a2b8);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    .copy-button:hover {
+        background: linear-gradient(90deg, #17a2b8, #1f77b4);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    /* 편집 모드 스타일 */
+    .edit-mode {
+        background-color: #fff3cd;
+        border: 2px solid #ffc107;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin: 0.5rem 0;
+    }
+    
+    /* 미리보기 스타일 */
+    .preview-container {
+        background: #f8f9fa;
+        border: 2px solid #e9ecef;
+        border-radius: 1rem;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .preview-container h3 {
+        color: #495057;
+        margin-bottom: 1rem;
+    }
+    
+    /* 유효성 검사 결과 스타일 */
+    .validation-success {
+        color: #28a745;
+        font-weight: 500;
+    }
+    
+    .validation-warning {
+        color: #ffc107;
+        font-weight: 500;
+    }
+    
+    .validation-error {
+        color: #dc3545;
+        font-weight: 500;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def detect_mobile_device() -> bool:
+    """모바일 디바이스 감지"""
+    # User-Agent 기반 간단한 모바일 감지
+    # 실제 구현에서는 JavaScript를 통한 더 정확한 감지 필요
+    return st.session_state.get('is_mobile', False)
 
 def add_mobile_detection_script() -> None:
-    """모바일 환경 감지 스크립트 추가"""
+    """향상된 모바일 환경 감지 스크립트"""
     st.markdown("""
     <script>
-    // 모바일 환경 감지
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile) {
-        // Streamlit session state에 모바일 정보 전달
-        const stateEvent = new CustomEvent('streamlit:setState', {
-            detail: { is_mobile: true }
-        });
-        window.dispatchEvent(stateEvent);
+    // 향상된 모바일/태블릿 감지
+    function detectDevice() {
+        const userAgent = navigator.userAgent.toLowerCase();
+        const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+        const isTablet = /ipad|android(?!.*mobile)|tablet/i.test(userAgent);
+        const screenWidth = window.screen.width;
+        const screenHeight = window.screen.height;
+        
+        // 화면 크기 기반 추가 감지
+        const isSmallScreen = Math.min(screenWidth, screenHeight) < 768;
+        const isMediumScreen = Math.min(screenWidth, screenHeight) >= 768 && Math.min(screenWidth, screenHeight) < 1024;
+        
+        return {
+            isMobile: isMobile || isSmallScreen,
+            isTablet: isTablet || isMediumScreen,
+            isDesktop: !isMobile && !isTablet && !isSmallScreen && !isMediumScreen,
+            screenWidth: screenWidth,
+            screenHeight: screenHeight
+        };
     }
+    
+    // 디바이스 정보 저장
+    const deviceInfo = detectDevice();
+    
+    // Streamlit에서 접근 가능한 전역 변수로 설정
+    window.streamlitDeviceInfo = deviceInfo;
+    
+    // 뷰포트 변경 감지
+    window.addEventListener('resize', function() {
+        const newDeviceInfo = detectDevice();
+        window.streamlitDeviceInfo = newDeviceInfo;
+    });
+    
+    // 터치 이벤트 지원 감지
+    const supportsTouchEvents = 'ontouchstart' in window;
+    window.streamlitDeviceInfo.supportsTouch = supportsTouchEvents;
+    
+    console.log('Device Info:', window.streamlitDeviceInfo);
     </script>
     """, unsafe_allow_html=True)
 
@@ -818,12 +1566,21 @@ if __name__ == "__main__":
         }
     }
     
-    # 모바일 감지 스크립트 추가
+    # 모바일 감지 스크립트 및 스타일 추가
     add_mobile_detection_script()
+    add_responsive_mobile_styles()
     
     # 메인 컴포넌트 테스트
-    st.title("🧪 AI 콘텐츠 표시 컴포넌트 테스트")
+    st.title("🧪 AI 콘텐츠 관리 인터페이스 v2.0 테스트")
     
+    # 새로운 향상된 인터페이스 테스트
+    render_enhanced_ai_content_management(sample_candidate_data)
+    
+    # 구분선
+    st.markdown("---")
+    st.markdown("## 🔄 레거시 인터페이스 (호환성 테스트)")
+    
+    # 기존 인터페이스 테스트
     render_ai_content_display_component(sample_candidate_data)
     
     # 레거시 테스트 (기존 구조 호환성)

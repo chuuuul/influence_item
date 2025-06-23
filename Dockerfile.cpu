@@ -1,0 +1,39 @@
+# CPU 서버용 Dockerfile - 대시보드 및 API 서버
+FROM python:3.11-slim
+
+# 기본 패키지 설치
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 작업 디렉토리 설정
+WORKDIR /app
+
+# Python 의존성 설치
+COPY requirements-cpu.txt .
+RUN pip install --no-cache-dir -r requirements-cpu.txt
+
+# Playwright 브라우저 설치
+RUN playwright install chromium
+RUN playwright install-deps
+
+# 애플리케이션 코드 복사
+COPY dashboard/ ./dashboard/
+COPY src/ ./src/
+COPY config/ ./config/
+COPY run_dashboard.py .
+
+# 환경 변수 설정
+ENV PYTHONPATH=/app
+ENV STREAMLIT_SERVER_PORT=8501
+ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
+
+# 포트 노출
+EXPOSE 8501
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+# 실행 명령
+CMD ["streamlit", "run", "dashboard/main_dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]

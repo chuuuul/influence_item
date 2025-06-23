@@ -1,0 +1,45 @@
+# GPU 서버용 Dockerfile - AI 모델 처리
+FROM nvidia/cuda:12.0-devel-ubuntu22.04
+
+# 기본 패키지 설치
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/*
+
+# 작업 디렉토리 설정
+WORKDIR /app
+
+# Python 의존성 설치
+COPY requirements-gpu.txt .
+RUN pip3 install --no-cache-dir -r requirements-gpu.txt
+
+# 애플리케이션 코드 복사
+COPY src/ ./src/
+COPY config/ ./config/
+COPY main.py .
+
+# YOLO 모델 다운로드 (선택적)
+RUN python3 -c "from ultralytics import YOLO; YOLO('yolo11n.pt')" || true
+
+# 환경 변수 설정
+ENV PYTHONPATH=/app
+ENV CUDA_VISIBLE_DEVICES=0
+
+# 포트 노출 (FastAPI 서버용)
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD python3 -c "import torch; print('GPU Available:', torch.cuda.is_available())" || exit 1
+
+# 실행 명령
+CMD ["python3", "-m", "uvicorn", "src.api.gpu_server:app", "--host", "0.0.0.0", "--port", "8001"]
