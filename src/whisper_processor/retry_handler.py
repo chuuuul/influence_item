@@ -21,13 +21,16 @@ class RetryHandler:
         Args:
             config: 설정 객체
         """
-        self.config = config or Config
+        self.config = config or Config()
         self.logger = self._setup_logger()
     
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        try:
+            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)  # 기본값 사용
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -185,13 +188,19 @@ class RetryHandler:
 
 
 # 전역 재시도 핸들러 인스턴스
-retry_handler = RetryHandler()
+retry_handler = None
 
 # 편의를 위한 데코레이터 함수들
 def retry_network_operation(max_retries: int = 3, base_delay: float = 2.0):
     """네트워크 작업 재시도 데코레이터"""
+    global retry_handler
+    if retry_handler is None:
+        retry_handler = RetryHandler()
     return retry_handler.retry_on_network_error(max_retries, base_delay)
 
 def retry_api_operation(max_retries: int = 2, base_delay: float = 5.0):
     """API 작업 재시도 데코레이터"""
+    global retry_handler
+    if retry_handler is None:
+        retry_handler = RetryHandler()
     return retry_handler.retry_on_api_error(max_retries, base_delay)

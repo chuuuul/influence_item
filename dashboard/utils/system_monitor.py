@@ -16,6 +16,13 @@ from pathlib import Path
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+# GPU 모니터링을 위한 임포트
+try:
+    import GPUtil
+    GPU_AVAILABLE = True
+except ImportError:
+    GPU_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +46,20 @@ class HealthCheck:
 
 
 @dataclass
+class GPUMetrics:
+    """GPU 메트릭"""
+    gpu_id: int
+    name: str
+    load: float
+    memory_util: float
+    memory_total: int
+    memory_used: int
+    memory_free: int
+    temperature: float
+    timestamp: datetime
+
+
+@dataclass
 class SystemMetrics:
     """시스템 메트릭"""
     timestamp: datetime
@@ -49,6 +70,7 @@ class SystemMetrics:
     disk_free: int
     active_connections: int
     uptime: float
+    gpu_metrics: List[GPUMetrics] = None
 
 
 class AlertManager:
@@ -134,6 +156,7 @@ class SystemMonitor:
             "disk_space": self._check_disk_health,
             "memory": self._check_memory_health,
             "cpu": self._check_cpu_health,
+            "gpu": self._check_gpu_health,
             "external_services": self._check_external_services_health
         }
         
@@ -189,12 +212,18 @@ class SystemMonitor:
             # 디스크 정보
             disk = psutil.disk_usage('/')
             
-            # 네트워크 연결 수
-            connections = len(psutil.net_connections())
+            # 네트워크 연결 수 (권한 문제 시 기본값 사용)
+            try:
+                connections = len(psutil.net_connections())
+            except (psutil.AccessDenied, OSError):
+                connections = 0
             
             # 시스템 업타임
             boot_time = psutil.boot_time()
             uptime = time.time() - boot_time
+            
+            # GPU 메트릭 수집
+            gpu_metrics = self._collect_gpu_metrics()
             
             return SystemMetrics(
                 timestamp=datetime.now(),
@@ -204,12 +233,42 @@ class SystemMonitor:
                 disk_percent=disk.used / disk.total * 100,
                 disk_free=disk.free,
                 active_connections=connections,
-                uptime=uptime
+                uptime=uptime,
+                gpu_metrics=gpu_metrics
             )
             
         except Exception as e:
             logger.error(f"Failed to collect system metrics: {e}")
             return None
+    
+    def _collect_gpu_metrics(self) -> List[GPUMetrics]:
+        """GPU 메트릭 수집"""
+        if not GPU_AVAILABLE:
+            return []
+        
+        try:
+            gpus = GPUtil.getGPUs()
+            gpu_metrics = []
+            
+            for gpu in gpus:
+                metrics = GPUMetrics(
+                    gpu_id=gpu.id,
+                    name=gpu.name,
+                    load=gpu.load * 100,  # 백분율로 변환
+                    memory_util=gpu.memoryUtil * 100,  # 백분율로 변환
+                    memory_total=gpu.memoryTotal,
+                    memory_used=gpu.memoryUsed,
+                    memory_free=gpu.memoryFree,
+                    temperature=gpu.temperature,
+                    timestamp=datetime.now()
+                )
+                gpu_metrics.append(metrics)
+            
+            return gpu_metrics
+            
+        except Exception as e:
+            logger.error(f"Failed to collect GPU metrics: {e}")
+            return []
     
     def _save_metrics(self, metrics: SystemMetrics):
         """메트릭 저장"""
@@ -445,6 +504,110 @@ class SystemMonitor:
                 component="cpu",
                 status=HealthStatus.CRITICAL,
                 message=f"CPU check failed: {str(e)}",
+                response_time=0,
+                timestamp=datetime.now()
+            )
+    
+    def _check_gpu_health(self) -> HealthCheck:
+        """GPU 헬스 확인"""
+        if not GPU_AVAILABLE:
+            return HealthCheck(
+                component="gpu",
+                status=HealthStatus.WARNING,
+                message="GPU monitoring not available (GPUtil not installed)",
+                response_time=0,
+                timestamp=datetime.now()
+            )
+        
+        try:
+            gpus = GPUtil.getGPUs()
+            
+            if not gpus:
+                return HealthCheck(
+                    component="gpu",
+                    status=HealthStatus.WARNING,
+                    message="No GPUs detected",
+                    response_time=0,
+                    timestamp=datetime.now()
+                )
+            
+            gpu_details = []
+            overall_status = HealthStatus.HEALTHY
+            messages = []
+            
+            for gpu in gpus:
+                gpu_load = gpu.load * 100
+                gpu_memory = gpu.memoryUtil * 100
+                gpu_temp = gpu.temperature
+                
+                gpu_status = HealthStatus.HEALTHY
+                gpu_message = f"GPU {gpu.id} ({gpu.name}): Normal"
+                
+                # GPU 로드 확인
+                if gpu_load > 95:
+                    gpu_status = HealthStatus.CRITICAL
+                    gpu_message = f"GPU {gpu.id}: Critical load {gpu_load:.1f}%"
+                    overall_status = HealthStatus.CRITICAL
+                elif gpu_load > 85:
+                    gpu_status = HealthStatus.WARNING
+                    gpu_message = f"GPU {gpu.id}: High load {gpu_load:.1f}%"
+                    if overall_status == HealthStatus.HEALTHY:
+                        overall_status = HealthStatus.WARNING
+                
+                # GPU 메모리 확인
+                if gpu_memory > 95:
+                    gpu_status = HealthStatus.CRITICAL
+                    gpu_message = f"GPU {gpu.id}: Critical memory {gpu_memory:.1f}%"
+                    overall_status = HealthStatus.CRITICAL
+                elif gpu_memory > 85:
+                    gpu_status = HealthStatus.WARNING
+                    gpu_message = f"GPU {gpu.id}: High memory {gpu_memory:.1f}%"
+                    if overall_status == HealthStatus.HEALTHY:
+                        overall_status = HealthStatus.WARNING
+                
+                # GPU 온도 확인
+                if gpu_temp > 85:
+                    gpu_status = HealthStatus.CRITICAL
+                    gpu_message = f"GPU {gpu.id}: Critical temperature {gpu_temp}°C"
+                    overall_status = HealthStatus.CRITICAL
+                elif gpu_temp > 75:
+                    gpu_status = HealthStatus.WARNING
+                    gpu_message = f"GPU {gpu.id}: High temperature {gpu_temp}°C"
+                    if overall_status == HealthStatus.HEALTHY:
+                        overall_status = HealthStatus.WARNING
+                
+                gpu_details.append({
+                    "id": gpu.id,
+                    "name": gpu.name,
+                    "load_percent": gpu_load,
+                    "memory_percent": gpu_memory,
+                    "memory_total_mb": gpu.memoryTotal,
+                    "memory_used_mb": gpu.memoryUsed,
+                    "temperature_c": gpu_temp,
+                    "status": gpu_status.value
+                })
+                
+                messages.append(gpu_message)
+            
+            summary_message = f"{len(gpus)} GPU(s) detected. " + "; ".join(messages)
+            
+            return HealthCheck(
+                component="gpu",
+                status=overall_status,
+                message=summary_message,
+                response_time=0,
+                timestamp=datetime.now(),
+                details={
+                    "gpu_count": len(gpus),
+                    "gpus": gpu_details
+                }
+            )
+            
+        except Exception as e:
+            return HealthCheck(
+                component="gpu",
+                status=HealthStatus.CRITICAL,
+                message=f"GPU health check failed: {str(e)}",
                 response_time=0,
                 timestamp=datetime.now()
             )

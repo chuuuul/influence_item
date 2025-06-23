@@ -16,6 +16,14 @@ except ImportError:
 
 from config.config import Config
 
+# API 사용량 추적을 위한 임포트
+try:
+    from src.api.usage_tracker import get_tracker
+except ImportError:
+    # 추적기가 없는 경우 더미 함수
+    def get_tracker():
+        return None
+
 
 class GeminiFirstPassAnalyzer:
     """Gemini 2.5 Flash를 활용한 1차 분석 클래스"""
@@ -27,7 +35,7 @@ class GeminiFirstPassAnalyzer:
         Args:
             config: 설정 객체
         """
-        self.config = config or Config
+        self.config = config or Config()
         self.logger = self._setup_logger()
         self.model = None
         self._setup_client()
@@ -38,7 +46,10 @@ class GeminiFirstPassAnalyzer:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        try:
+            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)  # 기본값 사용
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -171,7 +182,11 @@ class GeminiFirstPassAnalyzer:
         Returns:
             API 응답 텍스트
         """
+        # API 사용량 추적 시작
+        tracker = get_tracker()
+        
         for attempt in range(max_retries):
+            start_time = time.time()
             try:
                 self.logger.debug(f"Gemini API 호출 시도 {attempt + 1}/{max_retries}")
                 
@@ -185,12 +200,52 @@ class GeminiFirstPassAnalyzer:
                 
                 if response and response.text:
                     self.logger.debug("Gemini API 호출 성공")
+                    
+                    # 사용량 추적 - 성공
+                    if tracker:
+                        response_time = (time.time() - start_time) * 1000
+                        # 토큰 수 추정 (실제 토큰 수는 response 객체에서 가져와야 함)
+                        estimated_tokens = len(user_prompt) // 4 + len(response.text) // 4  # 대략적 추정
+                        tracker.track_api_call(
+                            api_name="gemini",
+                            endpoint="/v1/generate_content",
+                            method="POST",
+                            tokens_used=estimated_tokens,
+                            status_code=200,
+                            response_time_ms=response_time,
+                            metadata={
+                                "model": self.config.GEMINI_MODEL,
+                                "max_tokens": self.config.GEMINI_MAX_TOKENS,
+                                "temperature": self.config.GEMINI_TEMPERATURE,
+                                "attempt": attempt + 1
+                            }
+                        )
+                    
                     return response.text
                 else:
                     raise ValueError("빈 응답 받음")
                     
             except Exception as e:
                 self.logger.warning(f"Gemini API 호출 실패 (시도 {attempt + 1}): {str(e)}")
+                
+                # 사용량 추적 - 실패
+                if tracker:
+                    response_time = (time.time() - start_time) * 1000
+                    tracker.track_api_call(
+                        api_name="gemini",
+                        endpoint="/v1/generate_content",
+                        method="POST",
+                        tokens_used=0,
+                        status_code=500,
+                        response_time_ms=response_time,
+                        error_message=str(e),
+                        metadata={
+                            "model": self.config.GEMINI_MODEL,
+                            "attempt": attempt + 1,
+                            "max_retries": max_retries
+                        }
+                    )
+                
                 if attempt == max_retries - 1:
                     raise
                 

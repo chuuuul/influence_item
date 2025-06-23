@@ -15,6 +15,14 @@ import logging
 
 from ..whisper_processor.retry_handler import RetryHandler
 
+# API 사용량 추적을 위한 임포트
+try:
+    from src.api.usage_tracker import get_tracker
+except ImportError:
+    # 추적기가 없는 경우 더미 함수
+    def get_tracker():
+        return None
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +44,7 @@ class CoupangApiClient:
         """
         self.access_key = access_key
         self.secret_key = secret_key
-        self.retry_handler = RetryHandler(max_retries=3, base_delay=1.0)
+        self.retry_handler = RetryHandler()
         
         logger.info("쿠팡 API 클라이언트 초기화 완료")
         
@@ -94,6 +102,8 @@ class CoupangApiClient:
             CoupangApiError: API 호출 실패 시
         """
         url = f"{self.BASE_URL}{endpoint}"
+        tracker = get_tracker()
+        start_time = time.time()
         
         # 쿼리 스트링 생성
         query_string = ""
@@ -125,13 +135,68 @@ class CoupangApiClient:
             
             result = response.json()
             logger.debug(f"쿠팡 API 호출 성공: {endpoint}")
+            
+            # 사용량 추적 - 성공
+            if tracker:
+                response_time = (time.time() - start_time) * 1000
+                tracker.track_api_call(
+                    api_name="coupang",
+                    endpoint=endpoint,
+                    method=method.upper(),
+                    tokens_used=0,  # Coupang API는 토큰 기반이 아님
+                    status_code=response.status_code,
+                    response_time_ms=response_time,
+                    metadata={
+                        "params": params,
+                        "query_string": query_string,
+                        "response_size": len(str(result)) if result else 0
+                    }
+                )
+            
             return result
             
         except requests.exceptions.RequestException as e:
             logger.error(f"쿠팡 API 호출 실패: {endpoint} - {str(e)}")
+            
+            # 사용량 추적 - 실패
+            if tracker:
+                response_time = (time.time() - start_time) * 1000
+                status_code = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
+                tracker.track_api_call(
+                    api_name="coupang",
+                    endpoint=endpoint,
+                    method=method.upper(),
+                    tokens_used=0,
+                    status_code=status_code,
+                    response_time_ms=response_time,
+                    error_message=str(e),
+                    metadata={
+                        "params": params,
+                        "error_type": type(e).__name__
+                    }
+                )
+            
             raise CoupangApiError(f"API 호출 실패: {str(e)}")
         except Exception as e:
             logger.error(f"쿠팡 API 처리 중 오류: {str(e)}")
+            
+            # 사용량 추적 - 예외
+            if tracker:
+                response_time = (time.time() - start_time) * 1000
+                tracker.track_api_call(
+                    api_name="coupang",
+                    endpoint=endpoint,
+                    method=method.upper(),
+                    tokens_used=0,
+                    status_code=500,
+                    response_time_ms=response_time,
+                    error_message=str(e),
+                    metadata={
+                        "params": params,
+                        "error_type": type(e).__name__
+                    }
+                )
+            
             raise CoupangApiError(f"API 처리 오류: {str(e)}")
             
     def search_products(self, keyword: str, limit: int = 50, subId: Optional[str] = None) -> Dict[str, Any]:

@@ -1,0 +1,426 @@
+/* 
+T01_S03_M03: 모니터링 대시보드 모바일 반응형 스타일
+실시간 모니터링 대시보드를 위한 반응형 CSS 스타일링
+*/
+
+/* 기본 스타일 설정 */
+.main .block-container {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    max-width: 100%;
+}
+
+/* 메트릭 카드 스타일 */
+.metric-card {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 1rem;
+    border-left: 4px solid #1f77b4;
+}
+
+.metric-card.warning {
+    border-left-color: #ff7f0e;
+}
+
+.metric-card.critical {
+    border-left-color: #d62728;
+}
+
+.metric-card.healthy {
+    border-left-color: #2ca02c;
+}
+
+/* 헬스 상태 인디케이터 */
+.health-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.health-indicator.healthy {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.health-indicator.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.health-indicator.critical {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.health-indicator.down {
+    background-color: #e2e3e5;
+    color: #383d41;
+}
+
+/* 게이지 차트 컨테이너 */
+.gauge-container {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* 차트 반응형 설정 */
+.plotly-chart {
+    width: 100% !important;
+    height: auto !important;
+}
+
+/* 데이터프레임 스타일링 */
+.dataframe {
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* 사이드바 스타일 */
+.css-1d391kg {
+    padding-top: 1rem;
+}
+
+/* 모바일 최적화 (768px 이하) */
+@media (max-width: 768px) {
+    /* 메인 컨테이너 패딩 조정 */
+    .main .block-container {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+    
+    /* 열 간격 조정 */
+    .row-widget.stHorizontal > div {
+        padding-left: 0.25rem !important;
+        padding-right: 0.25rem !important;
+    }
+    
+    /* 메트릭 카드 작게 */
+    .metric-card {
+        padding: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* 게이지 차트 높이 조정 */
+    .gauge-container {
+        padding: 0.75rem;
+    }
+    
+    /* 텍스트 크기 조정 */
+    .metric-value {
+        font-size: 1.5rem !important;
+    }
+    
+    .metric-label {
+        font-size: 0.875rem !important;
+    }
+    
+    /* 사이드바 너비 조정 */
+    .css-1d391kg {
+        width: 250px !important;
+    }
+    
+    /* 테이블 스크롤 */
+    .dataframe {
+        overflow-x: auto;
+        font-size: 0.875rem;
+    }
+    
+    /* 차트 높이 조정 */
+    .plotly-chart {
+        min-height: 250px !important;
+    }
+}
+
+/* 태블릿 최적화 (769px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .main .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    .metric-card {
+        padding: 0.875rem;
+    }
+    
+    .gauge-container {
+        padding: 0.875rem;
+    }
+    
+    .plotly-chart {
+        min-height: 300px !important;
+    }
+}
+
+/* 데스크톱 최적화 (1025px 이상) */
+@media (min-width: 1025px) {
+    .main .block-container {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    
+    .plotly-chart {
+        min-height: 350px !important;
+    }
+}
+
+/* 상태별 색상 정의 */
+:root {
+    --color-healthy: #2ca02c;
+    --color-warning: #ff7f0e;
+    --color-critical: #d62728;
+    --color-down: #7f7f7f;
+    --color-primary: #1f77b4;
+    --color-secondary: #ff7f0e;
+    --color-success: #2ca02c;
+    --color-danger: #d62728;
+    --color-warning: #ff7f0e;
+    --color-info: #17a2b8;
+    --color-light: #f8f9fa;
+    --color-dark: #343a40;
+}
+
+/* 애니메이션 효과 */
+.metric-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+/* 로딩 인디케이터 스타일 */
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: var(--color-secondary);
+}
+
+.loading-spinner {
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid var(--color-primary);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+    margin-right: 0.5rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* 에러 메시지 스타일 */
+.error-message {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+
+.warning-message {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+
+.success-message {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+
+.info-message {
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #0c5460;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+
+/* 프로그레스 바 스타일 */
+.progress-bar {
+    background-color: #e9ecef;
+    border-radius: 0.375rem;
+    height: 0.5rem;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    transition: width 0.3s ease-in-out;
+}
+
+.progress-bar-fill.healthy {
+    background-color: var(--color-healthy);
+}
+
+.progress-bar-fill.warning {
+    background-color: var(--color-warning);
+}
+
+.progress-bar-fill.critical {
+    background-color: var(--color-critical);
+}
+
+/* 스크롤바 스타일링 (웹킷 브라우저) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* 툴팁 스타일 */
+.tooltip {
+    position: relative;
+    display: inline-block;
+    cursor: help;
+}
+
+.tooltip:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
+    z-index: 1000;
+    opacity: 0;
+    animation: fadeIn 0.3s ease-in-out forwards;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* 반응형 테이블 */
+.responsive-table {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+}
+
+.responsive-table table {
+    min-width: 600px;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.responsive-table th,
+.responsive-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.responsive-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+/* 모바일에서 열 숨기기 */
+@media (max-width: 768px) {
+    .hide-mobile {
+        display: none !important;
+    }
+    
+    .responsive-table table {
+        min-width: 100%;
+    }
+    
+    .responsive-table th,
+    .responsive-table td {
+        padding: 0.5rem 0.25rem;
+        font-size: 0.875rem;
+    }
+}
+
+/* 다크 모드 지원 */
+@media (prefers-color-scheme: dark) {
+    .metric-card {
+        background: #2d3748;
+        color: #e2e8f0;
+        border-left-color: #4299e1;
+    }
+    
+    .gauge-container {
+        background: #2d3748;
+        color: #e2e8f0;
+    }
+    
+    .responsive-table th {
+        background-color: #4a5568;
+        color: #e2e8f0;
+    }
+    
+    .responsive-table td {
+        border-bottom-color: #4a5568;
+        color: #e2e8f0;
+    }
+}
+
+/* 인쇄 스타일 */
+@media print {
+    .main .block-container {
+        padding: 0;
+        max-width: 100%;
+    }
+    
+    .metric-card {
+        box-shadow: none;
+        border: 1px solid #dee2e6;
+        break-inside: avoid;
+    }
+    
+    .plotly-chart {
+        max-height: 400px;
+    }
+    
+    .hide-print {
+        display: none !important;
+    }
+}

@@ -313,7 +313,7 @@ class TargetFrameExtractor:
         Args:
             config: 설정 객체
         """
-        self.config = config or Config
+        self.config = config or Config()
         self.logger = self._setup_logger()
         
         # 컴포넌트 초기화
@@ -332,7 +332,10 @@ class TargetFrameExtractor:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        try:
+            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)  # 기본값 사용
         
         if not logger.handlers:
             handler = logging.StreamHandler()

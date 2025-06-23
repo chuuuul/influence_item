@@ -22,6 +22,7 @@ try:
     from dashboard.pages.monetizable_candidates import render_monetizable_candidates
     from dashboard.pages.filtered_products import render_filtered_products
     from dashboard.pages.ai_content_generator import render_ai_content_generator
+    from dashboard.pages.api_usage_tracking import main as render_api_usage_tracking
     from dashboard.components.detail_view import render_detail_view
     from dashboard.utils.performance_monitor import (
         get_performance_monitor, 
@@ -33,6 +34,7 @@ except ImportError:
     render_monetizable_candidates = None
     render_filtered_products = None
     render_ai_content_generator = None
+    render_api_usage_tracking = None
     render_detail_view = None
     get_performance_monitor = None
     optimize_streamlit_config = None
@@ -411,6 +413,7 @@ def render_breadcrumb():
         'monetizable_candidates': [('🏠', '홈'), ('💰', '수익화 가능 후보')],
         'filtered_products': [('🏠', '홈'), ('🔍', '수익화 필터링 목록')],
         'ai_content_generator': [('🏠', '홈'), ('🔧', '분석 도구'), ('🤖', 'AI 콘텐츠 생성')],
+        'api_usage_tracking': [('🏠', '홈'), ('📊', '관리'), ('💰', 'API 사용량 추적')],
         'detail_view': [('🏠', '홈'), ('💰', '수익화 가능 후보'), ('📋', '상세 뷰')],
         'video_analysis': [('🏠', '홈'), ('🔧', '분석 도구'), ('📹', '영상 분석')],
         'statistics': [('🏠', '홈'), ('📊', '관리'), ('📈', '통계 및 리포트')],
@@ -458,6 +461,7 @@ def render_sidebar():
             "📹 영상 분석": "video_analysis"
         },
         "📊 관리 및 설정": {
+            "💰 API 사용량 추적": "api_usage_tracking",
             "📈 통계 및 리포트": "statistics",
             "⚙️ 시스템 설정": "settings"
         }
@@ -680,6 +684,11 @@ def main():
             render_ai_content_generator()
         else:
             st.error("AI 콘텐츠 생성기 페이지를 로드할 수 없습니다.")
+    elif current_page == 'api_usage_tracking':
+        if render_api_usage_tracking:
+            render_api_usage_tracking()
+        else:
+            st.error("API 사용량 추적 페이지를 로드할 수 없습니다.")
     elif current_page == 'detail_view':
         if render_detail_view and 'selected_product' in st.session_state:
             render_detail_view(st.session_state.selected_product)
