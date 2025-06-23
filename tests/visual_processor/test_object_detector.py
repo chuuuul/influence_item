@@ -10,7 +10,7 @@ import numpy as np
 from pathlib import Path
 
 from src.visual_processor.object_detector import ObjectDetector
-from config import Config
+from config.config import Config
 
 
 class TestObjectDetector(unittest.TestCase):

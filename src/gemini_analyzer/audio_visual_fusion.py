@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from config import Config
+from config.config import Config
 from .models import (
     WhisperSegment, AudioAnalysisResult, VisualAnalysisResult, 
     OCRResult, ObjectDetectionResult, FusionConfidence, FusedAnalysisResult

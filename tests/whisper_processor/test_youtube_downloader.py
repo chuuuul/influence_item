@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 from src.whisper_processor.youtube_downloader import YouTubeDownloader
-from config import Config
+from config.config import Config
 
 
 class TestYouTubeDownloader:

@@ -8,7 +8,7 @@ import logging
 import time
 import functools
 from typing import Callable, Any, Optional, Type, Tuple
-from config import Config
+from config.config import Config
 
 
 class RetryHandler:

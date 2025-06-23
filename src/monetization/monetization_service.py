@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import logging
 import time
 
-from config import Config
+from config.config import Config
 from .coupang_api_client import CoupangApiClient, CoupangApiError
 from .product_matcher import ProductMatcher, ProductMatch
 from .link_generator import LinkGenerator, AffiliateLink

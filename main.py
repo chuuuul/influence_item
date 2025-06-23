@@ -10,7 +10,7 @@ from pathlib import Path
 import logging
 import json
 
-from config import Config
+from config.config import Config
 from src.whisper_processor import WhisperProcessor, YouTubeDownloader
 from src.gemini_analyzer import GeminiFirstPassAnalyzer, GeminiSecondPassAnalyzer
 from src.gemini_analyzer.pipeline import AIAnalysisPipeline, analyze_youtube_video_sync

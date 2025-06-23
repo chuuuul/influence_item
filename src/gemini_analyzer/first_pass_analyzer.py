@@ -14,7 +14,7 @@ except ImportError:
     # 테스트 환경에서 genai 모듈이 없을 경우를 위한 처리
     genai = None
 
-from config import Config
+from config.config import Config
 
 
 class GeminiFirstPassAnalyzer:

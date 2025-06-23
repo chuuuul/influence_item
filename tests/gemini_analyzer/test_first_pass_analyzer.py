@@ -6,7 +6,7 @@ import pytest
 import json
 from unittest.mock import Mock, patch
 from src.gemini_analyzer.first_pass_analyzer import GeminiFirstPassAnalyzer
-from config import Config
+from config.config import Config
 
 
 class TestGeminiFirstPassAnalyzer:

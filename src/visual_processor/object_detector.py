@@ -21,7 +21,7 @@ except ImportError:
     np = None
     Image = None
 
-from config import Config
+from config.config import Config
 
 
 class ObjectDetector:

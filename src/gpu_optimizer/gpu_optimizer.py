@@ -34,7 +34,7 @@ except ImportError:
     np = None
     HAS_NUMPY = False
 
-from config import Config
+from config.config import Config
 
 
 class GPUMemoryManager:

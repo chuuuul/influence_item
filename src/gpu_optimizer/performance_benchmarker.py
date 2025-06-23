@@ -19,7 +19,7 @@ except ImportError:
     np = None
     HAS_NUMPY = False
 
-from config import Config
+from config.config import Config
 from .gpu_optimizer import GPUOptimizer
 
 

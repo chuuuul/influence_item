@@ -15,7 +15,7 @@ except ImportError:
     # 테스트 환경에서 whisper 모듈이 없을 경우를 위한 처리
     np = None
     whisper = None
-from config import Config
+from config.config import Config
 from .audio_preprocessor import AudioPreprocessor
 from ..gpu_optimizer import GPUOptimizer
 

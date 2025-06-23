@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 
 from src.visual_processor.image_preprocessor import ImagePreprocessor
-from config import Config
+from config.config import Config
 
 
 class TestImagePreprocessor:

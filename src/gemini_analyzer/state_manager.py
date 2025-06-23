@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from config import Config
+from config.config import Config
 
 
 class StateType(Enum):

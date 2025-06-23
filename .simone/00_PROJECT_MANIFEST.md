@@ -4,7 +4,7 @@ current_milestone_id: M02
 highest_sprint_in_milestone: S02
 current_sprint_id: S01_M02
 status: active
-last_updated: 2025-06-23 07:04
+last_updated: 2025-06-23 10:24
 ---
 
 # Project Manifest: 연예인 추천 아이템 자동화 릴스 시스템
@@ -88,7 +88,7 @@ last_updated: 2025-06-23 07:04
 - [아키텍처 문서](./01_PROJECT_DOCS/ARCHITECTURE.md)
 - [현재 마일스톤 요구사항](./02_REQUIREMENTS/M02_Management_Dashboard/)
 - [일반 태스크](./04_GENERAL_TASKS/)
-  - [ ] [T001: Project File Organization Cleanup](./04_GENERAL_TASKS/T001_Project_File_Organization_Cleanup.md) - Status: Not Started
+  - [✅] [T001: Project File Organization Cleanup](./04_GENERAL_TASKS/TX001_Project_File_Organization_Cleanup.md) - Status: Completed
 - [PRD 문서](../prd.md)
 
 ## 6. 빠른 링크

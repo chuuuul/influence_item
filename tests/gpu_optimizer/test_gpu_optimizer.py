@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.gpu_optimizer.gpu_optimizer import GPUOptimizer, GPUMemoryManager, GPUBatchProcessor
-from config import Config
+from config.config import Config
 
 
 class TestGPUMemoryManager:

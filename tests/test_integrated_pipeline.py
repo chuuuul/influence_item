@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from src.gemini_analyzer.pipeline import AIAnalysisPipeline, PipelineStatus, analyze_youtube_video_sync
-from config import Config
+from config.config import Config
 
 
 class TestIntegratedPipeline:

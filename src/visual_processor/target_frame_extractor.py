@@ -20,7 +20,7 @@ from ..gemini_analyzer.models import (
 from .ocr_processor import OCRProcessor
 from .object_detector import ObjectDetector
 from ..gpu_optimizer.gpu_optimizer import GPUOptimizer
-from config import Config
+from config.config import Config
 
 
 class TargetFrameExtractor:

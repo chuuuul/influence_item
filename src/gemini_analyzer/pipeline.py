@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any
 import traceback
 import random
 
-from config import Config
+from config.config import Config
 from ..whisper_processor.whisper_processor import WhisperProcessor
 from ..whisper_processor.youtube_downloader import YouTubeDownloader
 from .first_pass_analyzer import GeminiFirstPassAnalyzer

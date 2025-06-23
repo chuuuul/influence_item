@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 
 from src.whisper_processor import WhisperProcessor, YouTubeDownloader
-from config import Config
+from config.config import Config
 
 
 class TestWhisperProcessorIntegration:

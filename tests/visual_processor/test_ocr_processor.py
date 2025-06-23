@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 from src.visual_processor.ocr_processor import OCRProcessor
-from config import Config
+from config.config import Config
 
 
 class TestOCRProcessor:

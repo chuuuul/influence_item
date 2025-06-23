@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 from src.whisper_processor.whisper_processor import WhisperProcessor
-from config import Config
+from config.config import Config
 
 
 class TestWhisperProcessor:

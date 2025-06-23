@@ -19,7 +19,7 @@ from src.gemini_analyzer.audio_visual_fusion import AudioVisualFusion
 from src.gemini_analyzer.pipeline import AIAnalysisPipeline
 from src.gemini_analyzer.models import FusedAnalysisResult
 from src.visual_processor.ocr_processor import OCRProcessor
-from config import Config
+from config.config import Config
 
 
 class TestAudioVisualIntegration:

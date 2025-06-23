@@ -19,7 +19,7 @@ from src.gemini_analyzer.models import (
     WhisperSegment, AudioAnalysisResult, VisualAnalysisResult,
     OCRResult, ObjectDetectionResult, FusionConfidence, FusedAnalysisResult
 )
-from config import Config
+from config.config import Config
 
 
 class TestAudioVisualFusion:

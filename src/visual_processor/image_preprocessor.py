@@ -17,7 +17,7 @@ except ImportError:
     Image = None
     ImageEnhance = None
 
-from config import Config
+from config.config import Config
 from ..gpu_optimizer import GPUOptimizer
 
 

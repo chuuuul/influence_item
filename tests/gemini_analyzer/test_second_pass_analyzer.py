@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from src.gemini_analyzer.second_pass_analyzer import GeminiSecondPassAnalyzer
 from src.gemini_analyzer.models import ProductAnalysisResult, SourceInfo, CandidateInfo
-from config import Config
+from config.config import Config
 
 
 class TestGeminiSecondPassAnalyzer:
