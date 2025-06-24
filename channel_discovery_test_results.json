@@ -1,17 +1,17 @@
 {
-  "timestamp": "2025-06-24 14:13:51.438368",
+  "timestamp": "2025-06-24 15:01:25.232749",
   "test_results": {
-    "basic_functionality": false,
+    "basic_functionality": true,
     "text_similarity": true,
     "matching_algorithm": true,
     "scoring_system": true,
     "data_models": true,
-    "limited_discovery": "skipped_api_error"
+    "limited_discovery": true
   },
   "summary": {
     "total_tests": 6,
-    "passed": 4,
-    "failed": 1,
-    "skipped": 1
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0
   }
 }
