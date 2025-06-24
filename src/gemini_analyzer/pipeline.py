@@ -262,16 +262,21 @@ class AIAnalysisPipeline:
         try:
             self.logger.info("YouTube 영상 및 음성 다운로드 시작")
             
-            with self.youtube_downloader:
-                audio_path = self.youtube_downloader.download_audio(video_url)
-                # 영상 다운로드는 임시로 음성 파일과 같은 경로로 설정 (실제로는 다른 메서드 필요)
-                video_path = audio_path  # TODO: 실제 영상 다운로드 구현
+            # 다운로드 실행 (컨텍스트 매니저 사용하지 않음 - 파일 유지 필요)
+            audio_path = self.youtube_downloader.download_audio(video_url)
+            # 영상 다운로드 (720p 이하 품질)
+            video_path = self.youtube_downloader.download_video(video_url)
                 
             if not audio_path or not audio_path.exists():
                 raise Exception("오디오 다운로드 실패")
             
+            if not video_path or not video_path.exists():
+                raise Exception("영상 다운로드 실패")
+            
             step_time = time.time() - step_start
-            self._log_step("download", "success", f"미디어 다운로드 완료: 음성({audio_path})", step_time)
+            self._log_step("download", "success", 
+                         f"미디어 다운로드 완료: 음성({audio_path}), 영상({video_path})", 
+                         step_time)
             
             return audio_path, video_path
             

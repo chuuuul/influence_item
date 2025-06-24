@@ -52,7 +52,14 @@ class ObjectDetector:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL, 'INFO'))
+        try:
+            log_level = getattr(self.config, 'LOG_LEVEL', 'INFO')
+            if isinstance(log_level, str):
+                logger.setLevel(getattr(logging, log_level, logging.INFO))
+            else:
+                logger.setLevel(logging.INFO)
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()

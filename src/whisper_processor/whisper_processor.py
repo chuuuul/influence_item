@@ -76,8 +76,8 @@ class WhisperProcessor:
             self.logger.info(f"Whisper 모델 로드 시작: {self.config.WHISPER_MODEL_SIZE}")
             start_time = time.time()
             
-            # GPU 최적화된 모델 로딩
-            device = "cuda" if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available else "cpu"
+            # CPU 모드로 강제 설정 (macOS MPS 호환성 문제 해결)
+            device = "cpu"
             
             self.model = whisper.load_model(
                 self.config.WHISPER_MODEL_SIZE,
