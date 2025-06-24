@@ -1,0 +1,384 @@
+{
+  "meta": {
+    "instanceId": "channel-discovery-automation"
+  },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-node",
+      "name": "매일 채널 탐색 시작",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-node",
+      "name": "매일 오전 9시 실행",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discover",
+        "options": {
+          "timeout": 300
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "수동 실행 웹훅",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5001/discover",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "=[\"아이유\", \"IU\", \"뷰티\", \"패션\", \"메이크업\"]"
+            },
+            {
+              "name": "days_back",
+              "value": "=7"
+            },
+            {
+              "name": "max_candidates",
+              "value": "=100"
+            },
+            {
+              "name": "min_matching_score",
+              "value": "=0.3"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "http-request",
+      "name": "채널 디스커버리 API 호출",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-success",
+      "name": "성공 여부 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "execution_time",
+              "value": "={{ $json.execution_time_seconds }}초"
+            },
+            {
+              "name": "total_candidates",
+              "value": "={{ $json.total_candidates }}개"
+            },
+            {
+              "name": "high_score_candidates", 
+              "value": "={{ $json.high_score_candidates }}개"
+            },
+            {
+              "name": "session_id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        }
+      },
+      "id": "set-success-data",
+      "name": "성공 데이터 정리",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1120, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=🎉 채널 디스커버리 완료!\n• 실행 시간: {{ $json.execution_time }}\n• 발견된 후보: {{ $json.total_candidates }}\n• 고득점 후보: {{ $json.high_score_candidates }}\n• 세션 ID: {{ $json.session_id }}"
+            },
+            {
+              "name": "channel",
+              "value": "#channel-discovery"
+            },
+            {
+              "name": "username",
+              "value": "Channel Discovery Bot"
+            }
+          ]
+        }
+      },
+      "id": "slack-success",
+      "name": "성공 알림 (Slack)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "error_message",
+              "value": "={{ $json.error || '알 수 없는 오류' }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.timestamp }}"
+            }
+          ]
+        }
+      },
+      "id": "set-error-data",
+      "name": "오류 데이터 정리",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=🚨 채널 디스커버리 실패!\n• 오류: {{ $json.error_message }}\n• 시간: {{ $json.timestamp }}"
+            },
+            {
+              "name": "channel",
+              "value": "#alerts"
+            },
+            {
+              "name": "username",
+              "value": "Channel Discovery Bot"
+            }
+          ]
+        }
+      },
+      "id": "slack-error",
+      "name": "실패 알림 (Slack)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8080/webhook/n8n-results",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type", 
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "workflow_name",
+              "value": "daily_channel_discovery"
+            },
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json }}"
+            }
+          ]
+        }
+      },
+      "id": "update-dashboard",
+      "name": "대시보드 업데이트",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 180]
+    }
+  ],
+  "connections": {
+    "매일 오전 9시 실행": {
+      "main": [
+        [
+          {
+            "node": "채널 디스커버리 API 호출",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행 웹훅": {
+      "main": [
+        [
+          {
+            "node": "채널 디스커버리 API 호출",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "채널 디스커버리 API 호출": {
+      "main": [
+        [
+          {
+            "node": "성공 여부 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "성공 여부 확인": {
+      "main": [
+        [
+          {
+            "node": "성공 데이터 정리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "오류 데이터 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "성공 데이터 정리": {
+      "main": [
+        [
+          {
+            "node": "성공 알림 (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "성공 알림 (Slack)": {
+      "main": [
+        [
+          {
+            "node": "대시보드 업데이트",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "오류 데이터 정리": {
+      "main": [
+        [
+          {
+            "node": "실패 알림 (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 600
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-06-24T14:52:00.000Z",
+      "updatedAt": "2025-06-24T14:52:00.000Z",
+      "id": "1",
+      "name": "automation"
+    },
+    {
+      "createdAt": "2025-06-24T14:52:00.000Z", 
+      "updatedAt": "2025-06-24T14:52:00.000Z",
+      "id": "2",
+      "name": "channel-discovery"
+    }
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2025-06-24T14:52:00.000Z",
+  "versionId": "1"
+}

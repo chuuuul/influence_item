@@ -1,0 +1,71 @@
+name: Daily Channel Discovery
+
+on:
+  schedule:
+    # 매일 UTC 00:00 (한국시간 09:00)에 실행
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 수동 실행도 허용
+
+jobs:
+  channel-discovery:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Set up environment variables
+      env:
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      run: |
+        echo "YOUTUBE_API_KEY=$YOUTUBE_API_KEY" >> .env
+        
+    - name: Run daily channel discovery
+      run: |
+        python scripts/daily_channel_discovery.py
+        
+    - name: Upload discovery results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: daily-discovery-results-${{ github.run_number }}
+        path: |
+          daily_reports/
+          channel_discovery_results/
+          logs/
+        retention-days: 30
+        
+    - name: Commit and push results
+      if: success()
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add daily_reports/ channel_discovery_results/ logs/
+        git diff --staged --quiet || git commit -m "🤖 Daily channel discovery results - $(date +%Y-%m-%d)"
+        git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Send notification on failure
+      if: failure()
+      run: |
+        echo "🚨 Daily channel discovery failed on $(date)"
+        # 여기에 Slack, Discord, 이메일 알림 설정 가능

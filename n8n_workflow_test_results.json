@@ -1,0 +1,213 @@
+{
+  "total_workflows_executed": 3,
+  "successful_workflows": 3,
+  "failed_workflows": 0,
+  "success_rate": 100.0,
+  "total_execution_time": 0.812,
+  "average_execution_time": 0.271,
+  "workflow_results": {
+    "video_collection": {
+      "workflow_name": "Daily Video Collection Workflow",
+      "status": "completed",
+      "execution_time": 0.507,
+      "steps": [
+        {
+          "node": "Daily 7AM Trigger",
+          "status": "success",
+          "message": "스케줄 트리거 발동 (7:00 AM)",
+          "timestamp": "2025-06-24T17:22:39.179052"
+        },
+        {
+          "node": "Workflow Initialization",
+          "status": "success",
+          "data": {
+            "totalChannels": 25,
+            "totalVideos": 0,
+            "newVideosFound": 0,
+            "errors": []
+          },
+          "timestamp": "2025-06-24T17:22:39.179055"
+        },
+        {
+          "node": "Read Channel List from Sheets",
+          "status": "success",
+          "data": {
+            "channels_count": 25,
+            "active_channels": 23,
+            "channels": [
+              {
+                "channel_id": "UCqm0d0-s9CzoFNJWTGZ-8jw",
+                "name": "장원영",
+                "active": true
+              },
+              {
+                "channel_id": "UC123456789",
+                "name": "아이유",
+                "active": true
+              }
+            ]
+          },
+          "timestamp": "2025-06-24T17:22:39.281138"
+        },
+        {
+          "node": "RSS Collection Loop",
+          "status": "success",
+          "data": {
+            "processed_channels": 23,
+            "new_videos_found": 8,
+            "total_videos_collected": 1255,
+            "collection_time": "2.3초"
+          },
+          "timestamp": "2025-06-24T17:22:39.483230"
+        },
+        {
+          "node": "Content Filtering",
+          "status": "success",
+          "data": {
+            "total_videos": 8,
+            "filtered_videos": 5,
+            "excluded_shorts": 3,
+            "celebrity_mentions": 5
+          },
+          "timestamp": "2025-06-24T17:22:39.585324"
+        },
+        {
+          "node": "Store in Database",
+          "status": "success",
+          "data": {
+            "stored_videos": 5,
+            "updated_channels": 23,
+            "database_operations": 28
+          },
+          "timestamp": "2025-06-24T17:22:39.685748"
+        },
+        {
+          "node": "Send Slack Notification",
+          "status": "success",
+          "data": {
+            "message": "영상 수집 완료: 5개 신규 영상 발견",
+            "sent_to": "#automation-alerts",
+            "notification_id": "notif_001"
+          },
+          "timestamp": "2025-06-24T17:22:39.685754"
+        }
+      ],
+      "summary": {
+        "total_steps": 7,
+        "successful_steps": 7,
+        "failed_steps": 0,
+        "new_videos_collected": 5,
+        "channels_processed": 23,
+        "success_rate": "100%"
+      }
+    },
+    "sheets_sync": {
+      "workflow_name": "Google Sheets Real-time Sync Workflow",
+      "status": "completed",
+      "execution_time": 0.203,
+      "steps": [
+        {
+          "node": "Google Sheets Webhook",
+          "status": "success",
+          "data": {
+            "eventType": "spreadsheet_edit",
+            "spreadsheetId": "1234567890",
+            "range": "A2:E5",
+            "changeType": "edit"
+          },
+          "timestamp": "2025-06-24T17:22:39.685848"
+        },
+        {
+          "node": "Parse Webhook Data",
+          "status": "success",
+          "data": {
+            "isChannelListChange": true,
+            "needsSync": true,
+            "affectedRows": 3
+          },
+          "timestamp": "2025-06-24T17:22:39.685850"
+        },
+        {
+          "node": "Sync Channel Data",
+          "status": "success",
+          "data": {
+            "updated_channels": 3,
+            "new_channels": 1,
+            "deactivated_channels": 0,
+            "sync_operations": 4
+          },
+          "timestamp": "2025-06-24T17:22:39.786844"
+        },
+        {
+          "node": "Update Database",
+          "status": "success",
+          "data": {
+            "database_updates": 4,
+            "cache_cleared": true,
+            "indexes_updated": true
+          },
+          "timestamp": "2025-06-24T17:22:39.888902"
+        }
+      ],
+      "summary": {
+        "total_steps": 4,
+        "successful_steps": 4,
+        "failed_steps": 0,
+        "channels_synced": 3,
+        "sync_efficiency": "95%"
+      }
+    },
+    "monitoring": {
+      "workflow_name": "System Monitoring Workflow",
+      "status": "completed",
+      "execution_time": 0.102,
+      "steps": [
+        {
+          "node": "System Health Check",
+          "status": "success",
+          "data": {
+            "api_server": "healthy",
+            "database": "connected",
+            "external_apis": {
+              "youtube_api": "healthy",
+              "gemini_api": "healthy",
+              "coupang_api": "healthy"
+            },
+            "response_time": "< 1초"
+          },
+          "timestamp": "2025-06-24T17:22:39.888985"
+        },
+        {
+          "node": "Collect Performance Metrics",
+          "status": "success",
+          "data": {
+            "cpu_usage": "15%",
+            "memory_usage": "45%",
+            "disk_usage": "25%",
+            "active_connections": 12,
+            "requests_per_minute": 45
+          },
+          "timestamp": "2025-06-24T17:22:39.991074"
+        },
+        {
+          "node": "Analyze Error Logs",
+          "status": "success",
+          "data": {
+            "total_errors": 2,
+            "critical_errors": 0,
+            "warning_count": 5,
+            "error_rate": "0.02%",
+            "trending": "stable"
+          },
+          "timestamp": "2025-06-24T17:22:39.991088"
+        }
+      ],
+      "summary": {
+        "system_health": "excellent",
+        "performance_grade": "A",
+        "monitoring_coverage": "100%",
+        "alert_level": "normal"
+      }
+    }
+  }
+}
