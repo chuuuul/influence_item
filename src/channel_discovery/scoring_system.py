@@ -54,24 +54,24 @@ class QualityAnalyzer:
         self.logger = logging.getLogger(__name__)
     
     def calculate_subscriber_score(self, subscriber_count: int) -> float:
-        """구독자 수 기반 점수 (로그 스케일)"""
+        """규모 중립적 구독자 수 기반 점수 (편향성 제거)"""
         if subscriber_count <= 0:
             return 0.0
         
-        # 1K~10M 구독자를 0.1~1.0으로 매핑 (로그 스케일)
-        log_subs = math.log10(subscriber_count)
+        # 편향성 제거: 모든 규모에서 동등한 기회 제공
+        # 최소 요구사항만 적용 (1K 이상)
+        if subscriber_count < 1000:
+            return 0.2  # 최소 요구사항 미달
+        elif subscriber_count < 10000:
+            return 0.7  # 소규모 - 높은 전도율 기대
+        elif subscriber_count < 100000:
+            return 0.9  # 중규모 - 최적 규모
+        elif subscriber_count < 1000000:
+            return 0.8  # 대규모 - 안정적 팩덤
+        else:
+            return 0.6  # 초대규모 - 높은 비용 대비 효율
         
-        # 구간별 점수 매핑
-        if log_subs < 3:  # < 1K
-            return 0.05
-        elif log_subs < 4:  # 1K~10K
-            return 0.1 + (log_subs - 3) * 0.2  # 0.1~0.3
-        elif log_subs < 5:  # 10K~100K
-            return 0.3 + (log_subs - 4) * 0.3  # 0.3~0.6
-        elif log_subs < 6:  # 100K~1M
-            return 0.6 + (log_subs - 5) * 0.3  # 0.6~0.9
-        else:  # > 1M
-            return min(0.9 + (log_subs - 6) * 0.1, 1.0)
+        # 이제 가장 중요한 것은 구독자 수가 아니라 참여도와 콘텐츠 품질
     
     def calculate_activity_score(self, video_count: int, channel_age_days: int) -> float:
         """활동성 점수 (영상 수 대비 채널 연령)"""
@@ -156,23 +156,25 @@ class PotentialAnalyzer:
         self.logger = logging.getLogger(__name__)
     
     def calculate_growth_potential(self, channel_info: ChannelInfo) -> Tuple[float, Dict[str, float]]:
-        """성장 잠재력 점수 계산"""
+        """규모 중립적 성장 잠재력 점수 계산 (편향성 제거)"""
         metrics = {}
         
-        # 구독자 규모별 성장 잠재력
+        # 규모별 성장 가능성을 공평하게 평가
         sub_count = channel_info.subscriber_count
-        if sub_count < 10000:
-            growth_stage_score = 0.8  # 초기 단계, 높은 성장 가능성
-            metrics['growth_stage'] = growth_stage_score
+        
+        # 모든 규모에서 동등한 성장 기회 인정
+        if sub_count < 1000:
+            growth_stage_score = 0.6  # 초기 단계
+        elif sub_count < 10000:
+            growth_stage_score = 0.8  # 소규모 - 높은 성장 가능성
         elif sub_count < 100000:
-            growth_stage_score = 0.9  # 성장 단계, 최고 잠재력
-            metrics['growth_stage'] = growth_stage_score
+            growth_stage_score = 0.8  # 중규모 - 안정적 성장
         elif sub_count < 1000000:
-            growth_stage_score = 0.6  # 성숙 단계
-            metrics['growth_stage'] = growth_stage_score
+            growth_stage_score = 0.7  # 대규모 - 지속성
         else:
-            growth_stage_score = 0.3  # 대형 채널, 성장률 둔화
-            metrics['growth_stage'] = growth_stage_score
+            growth_stage_score = 0.7  # 초대규모 - 안정적 영향력
+        
+        metrics['growth_stage'] = growth_stage_score
         
         # 채널 연령 대비 성과
         if channel_info.published_at:
@@ -299,18 +301,16 @@ class MonetizationAnalyzer:
         return score, found_keywords
     
     def calculate_audience_commercial_value(self, channel_info: ChannelInfo) -> float:
-        """오디언스 상업적 가치 분석"""
-        score = 0.5  # 기본 점수
+        """규모 중립적 오디언스 상업적 가치 분석"""
+        score = 0.6  # 기본 점수 상향 조정
         
-        # 구독자 규모별 상업적 가치
+        # 모든 규모에서 동등한 상업적 가치 인정
         sub_count = channel_info.subscriber_count
-        if 10000 <= sub_count <= 500000:
-            # 중간 규모가 마케팅 효율이 좋음
-            score += 0.3
-        elif 1000 <= sub_count < 10000:
-            score += 0.2
-        elif sub_count > 500000:
-            score += 0.1
+        
+        # 규모보다 참여도와 상업적 적합성이 더 중요
+        if sub_count >= 1000:  # 최소 요구사항
+            # 모든 규모에서 동등한 기회
+            score += 0.2  # 상업적 달성 가능
         
         # 국가별 가치 (한국 타겟)
         if channel_info.country == 'KR':
@@ -375,12 +375,12 @@ class ChannelScorer:
         monetization_breakdown = self._calculate_monetization_score(channel_info)
         monetization_score = monetization_breakdown['total']
         
-        # 5. 종합 점수 계산 (0-100 스케일)
+        # 5. 균형잡힌 종합 점수 계산 (0-100 스케일, 편향성 제거)
         total_score = (
-            matching_score * 40 +        # 매칭 관련성 40%
-            quality_score * 30 +         # 채널 품질 30%
-            potential_score * 20 +       # 성장 잠재력 20%
-            monetization_score * 10      # 수익화 가능성 10%
+            matching_score * 35 +        # 매칭 관련성 35% (중요도 약간 감소)
+            quality_score * 25 +         # 채널 품질 25% (귀모 영향 감소)
+            potential_score * 25 +       # 성장 잠재력 25% (중요도 증가)
+            monetization_score * 15      # 수익화 가능성 15% (중요도 증가)
         )
         
         # 6. 등급 계산
@@ -441,12 +441,12 @@ class ChannelScorer:
         # 일관성 점수
         consistency_score, consistency_insights = self.quality_analyzer.analyze_content_consistency(channel_info)
         
-        # 종합 품질 점수
+        # 편향성 제거된 종합 품질 점수 (참여도와 일관성 중심)
         total_quality = (
-            subscriber_score * self.weights.subscriber_count_weight +
-            activity_score * 0.25 +
-            engagement_score * self.weights.engagement_rate_weight +
-            consistency_score * self.weights.content_consistency_weight
+            subscriber_score * 0.2 +     # 규모 비중 감소 (0.3 -> 0.2)
+            activity_score * 0.3 +       # 활동성 비중 증가 (0.25 -> 0.3)
+            engagement_score * 0.3 +     # 참여도 비중 증가 (0.25 -> 0.3)
+            consistency_score * 0.2      # 일관성 비중 유지 (0.2)
         )
         
         return {
@@ -487,17 +487,18 @@ class ChannelScorer:
         }
     
     def _calculate_grade(self, total_score: float) -> str:
-        """점수에 따른 등급 계산"""
-        if total_score >= 90:
-            return "S"
-        elif total_score >= 80:
-            return "A"
-        elif total_score >= 70:
-            return "B"
-        elif total_score >= 60:
-            return "C"
-        elif total_score >= 50:
-            return "D"
+        """공정한 등급 계산 (편향성 제거된 점수 기준)"""
+        # 편향성 제거로 인해 전반적인 점수가 낮아질 수 있으므로 등급 기준 조정
+        if total_score >= 85:
+            return "S"  # 90 -> 85
+        elif total_score >= 75:
+            return "A"  # 80 -> 75
+        elif total_score >= 65:
+            return "B"  # 70 -> 65
+        elif total_score >= 55:
+            return "C"  # 60 -> 55
+        elif total_score >= 45:
+            return "D"  # 50 -> 45
         else:
             return "F"
     
@@ -508,30 +509,30 @@ class ChannelScorer:
         strengths = []
         weaknesses = []
         
-        # 개별 점수 기준 분석
-        if matching_score > 0.8:
+        # 균형잡힌 개별 점수 기준 분석 (공정한 평가)
+        if matching_score > 0.75:
             strengths.append("타겟 키워드와 높은 관련성")
-        elif matching_score < 0.4:
+        elif matching_score < 0.5:
             weaknesses.append("타겟과 관련성 부족")
         
-        if quality_score > 0.7:
-            strengths.append("높은 채널 품질")
-        elif quality_score < 0.4:
-            weaknesses.append("채널 품질 개선 필요")
+        if quality_score > 0.75:
+            strengths.append("우수한 콘텐츠 품질")
+        elif quality_score < 0.5:
+            weaknesses.append("콘텐츠 품질 개선 필요")
         
-        if potential_score > 0.7:
+        if potential_score > 0.75:
             strengths.append("높은 성장 잠재력")
-        elif potential_score < 0.4:
+        elif potential_score < 0.5:
             weaknesses.append("성장 잠재력 제한적")
         
-        if monetization_score > 0.7:
+        if monetization_score > 0.75:
             strengths.append("수익화 친화적")
-        elif monetization_score < 0.4:
+        elif monetization_score < 0.5:
             weaknesses.append("수익화 어려움")
         
-        # 세부 분석
-        if quality_breakdown.get('subscriber_score', 0) > 0.8:
-            strengths.append("대규모 구독자 기반")
+        # 세부 분석 (규모 중립적 강점 분석)
+        if quality_breakdown.get('subscriber_score', 0) > 0.7:
+            strengths.append("상업적 적합한 규모")  # '대규모'라는 편향적 표현 제거
         
         if quality_breakdown.get('consistency_score', 0) > 0.8:
             strengths.append("일관된 콘텐츠")
@@ -559,13 +560,13 @@ class ChannelScorer:
         else:
             confidence_factors.append(0.5)
         
-        # 구독자 수 (신뢰도 지표)
-        if channel_info.subscriber_count > 10000:
+        # 채널 활동성 (규모 대신 활동성으로 신뢰도 판단)
+        if channel_info.video_count > 50:
             confidence_factors.append(0.9)
-        elif channel_info.subscriber_count > 1000:
+        elif channel_info.video_count > 20:
             confidence_factors.append(0.7)
         else:
-            confidence_factors.append(0.4)
+            confidence_factors.append(0.5)  # 구독자 수 대신 영상 수로 신뢰도 판단
         
         # 매칭 결과 신뢰도
         confidence_factors.append(matching_result.confidence)
@@ -620,6 +621,6 @@ class ChannelScorer:
                 grade: len([s for s in scores if s.grade == grade])
                 for grade in ['S', 'A', 'B', 'C', 'D', 'F']
             },
-            'high_potential_count': len([s for s in scores if s.total_score >= 70]),
-            'recommended_count': len([s for s in scores if s.total_score >= 60])
+            'high_potential_count': len([s for s in scores if s.total_score >= 65]),  # 70 -> 65
+            'recommended_count': len([s for s in scores if s.total_score >= 55])  # 60 -> 55
         }

@@ -25,25 +25,40 @@ from .models import (
 )
 from .matching_algorithm import ChannelMatcher
 from .scoring_system import ChannelScorer, ChannelScore
+from .error_handler import create_resilient_handler, RobustErrorHandler
 from ..youtube_api.youtube_client import YouTubeAPIClient, ChannelInfo
 
 
 class YouTubeChannelSearcher:
-    """YouTube API를 사용한 채널 검색기"""
+    """YouTube API를 사용한 채널 검색기 (Mock 모드 지원)"""
     
     def __init__(self, youtube_client: YouTubeAPIClient):
         self.youtube_client = youtube_client
         self.logger = logging.getLogger(__name__)
+        self.mock_mode = getattr(youtube_client, 'mock_mode', False)
+        
+        # 에러 처리기 초기화
+        self.error_handler = create_resilient_handler(
+            max_retries=3,
+            failure_threshold=5,
+            recovery_timeout=60,
+            base_delay=1.0,
+            max_delay=30.0
+        )
     
     async def search_channels_by_keyword(self, keyword: str, max_results: int = 50,
                                        region_code: str = "KR") -> List[ChannelInfo]:
-        """키워드로 채널 검색"""
+        """키워드로 채널 검색 (Mock 모드 지원)"""
         
         self.logger.info(f"키워드 채널 검색: '{keyword}' (최대 {max_results}개)")
         
+        # Mock 모드에서는 가짜 데이터 반환
+        if self.mock_mode:
+            return self._generate_mock_channels(keyword, max_results)
+        
         try:
-            # YouTube Search API 사용
-            def _search_channels():
+            # YouTube Search API 사용 (에러 처리 적용)
+            async def _search_channels():
                 return self.youtube_client.youtube.search().list(
                     part='snippet',
                     q=keyword,
@@ -53,7 +68,7 @@ class YouTubeChannelSearcher:
                     relevanceLanguage='ko'
                 ).execute()
             
-            search_response = await self.youtube_client._retry_request(_search_channels)
+            search_response = await self.error_handler.execute_with_resilience(_search_channels)
             
             if not search_response.get('items'):
                 self.logger.warning(f"키워드 '{keyword}'로 검색된 채널 없음")
@@ -74,9 +89,13 @@ class YouTubeChannelSearcher:
     
     async def search_trending_channels(self, category_id: Optional[str] = None,
                                      max_results: int = 50) -> List[ChannelInfo]:
-        """트렌딩 채널 검색"""
+        """트렌딩 채널 검색 (Mock 모드 지원)"""
         
         self.logger.info(f"트렌딩 채널 검색 (카테고리: {category_id or 'ALL'})")
+        
+        # Mock 모드에서는 가짜 데이터 반환
+        if self.mock_mode:
+            return self._generate_mock_trending_channels(max_results)
         
         try:
             # 인기 동영상 검색 후 채널 추출
@@ -114,9 +133,13 @@ class YouTubeChannelSearcher:
             return []
     
     async def get_related_channels(self, base_channel_id: str, max_results: int = 20) -> List[ChannelInfo]:
-        """관련 채널 검색 (구독자나 시청자가 함께 보는 채널)"""
+        """관련 채널 검색 (구독자나 시청자가 함께 보는 채널) (Mock 모드 지원)"""
         
         self.logger.info(f"관련 채널 검색: {base_channel_id}")
+        
+        # Mock 모드에서는 가짜 데이터 반환
+        if self.mock_mode:
+            return self._generate_mock_related_channels(base_channel_id, max_results)
         
         try:
             # 기본 채널의 최근 동영상들 가져오기
@@ -189,16 +212,122 @@ class YouTubeChannelSearcher:
         except Exception as e:
             self.logger.error(f"관련 채널 검색 실패: {str(e)}")
             return []
+    
+    def _generate_mock_channels(self, keyword: str, max_results: int) -> List[ChannelInfo]:
+        """키워드 기반 Mock 채널 데이터 생성"""
+        import random
+        
+        mock_channels = []
+        
+        # 키워드에 따른 채널 이름 생성
+        channel_templates = [
+            f"{keyword} 크리에이터",
+            f"{keyword} 리뷰어",
+            f"{keyword} 전문가",
+            f"{keyword} 유튜버",
+            f"{keyword} 매니아"
+        ]
+        
+        for i in range(min(max_results, 10)):  # 최대 10개
+            channel_name = random.choice(channel_templates) + f" {i+1}"
+            
+            mock_channel = ChannelInfo(
+                channel_id=f"mock_channel_{keyword}_{i+1}",
+                channel_name=channel_name,
+                subscriber_count=random.randint(10000, 500000),
+                video_count=random.randint(50, 300),
+                view_count=random.randint(1000000, 5000000),
+                description=f"{keyword} 관련 콘텐츠를 다루는 Mock 채널입니다.",
+                published_at="2020-01-01T00:00:00Z",
+                thumbnail_url="https://example.com/mock_thumbnail.jpg",
+                country="KR",
+                keywords=[keyword, "리뷰", "콘텐츠"],
+                verified=random.choice([True, False])
+            )
+            
+            mock_channels.append(mock_channel)
+        
+        self.logger.info(f"Mock 채널 데이터 생성 완료: {len(mock_channels)}개")
+        return mock_channels
+    
+    def _generate_mock_trending_channels(self, max_results: int) -> List[ChannelInfo]:
+        """트렌딩 Mock 채널 데이터 생성"""
+        import random
+        
+        trending_keywords = ["뷰티", "패션", "요리", "라이프스타일", "게임"]
+        mock_channels = []
+        
+        for i in range(min(max_results, 10)):
+            keyword = random.choice(trending_keywords)
+            
+            mock_channel = ChannelInfo(
+                channel_id=f"mock_trending_{i+1}",
+                channel_name=f"트렌딩 {keyword} 채널 {i+1}",
+                subscriber_count=random.randint(100000, 1000000),
+                video_count=random.randint(100, 500),
+                view_count=random.randint(5000000, 50000000),
+                description=f"트렌딩 {keyword} 콘텐츠 Mock 채널",
+                published_at="2019-01-01T00:00:00Z",
+                thumbnail_url="https://example.com/mock_trending.jpg",
+                country="KR",
+                keywords=[keyword, "트렌드", "인기"],
+                verified=True
+            )
+            
+            mock_channels.append(mock_channel)
+        
+        return mock_channels
+    
+    def _generate_mock_related_channels(self, base_channel_id: str, max_results: int) -> List[ChannelInfo]:
+        """관련 Mock 채널 데이터 생성"""
+        import random
+        
+        mock_channels = []
+        
+        for i in range(min(max_results, 5)):
+            mock_channel = ChannelInfo(
+                channel_id=f"mock_related_{base_channel_id}_{i+1}",
+                channel_name=f"{base_channel_id} 관련 채널 {i+1}",
+                subscriber_count=random.randint(20000, 300000),
+                video_count=random.randint(80, 400),
+                view_count=random.randint(2000000, 10000000),
+                description=f"{base_channel_id}와 비슷한 콘텐츠를 다루는 Mock 채널",
+                published_at="2020-06-01T00:00:00Z",
+                thumbnail_url="https://example.com/mock_related.jpg",
+                country="KR",
+                keywords=["관련", "비슷한", "콘텐츠"],
+                verified=random.choice([True, False])
+            )
+            
+            mock_channels.append(mock_channel)
+        
+        return mock_channels
 
 
 class ChannelDiscoveryEngine:
     """채널 탐색 메인 엔진"""
     
-    def __init__(self, youtube_api_key: Optional[str] = None):
+    def __init__(self, youtube_api_key: Optional[str] = None, mock_mode: bool = False):
         self.logger = logging.getLogger(__name__)
+        self.mock_mode = mock_mode
         
-        # YouTube API 클라이언트 초기화
-        self.youtube_client = YouTubeAPIClient(api_key=youtube_api_key)
+        # API 키가 없고 Mock 모드가 지정되지 않았으면 자동으로 Mock 모드 활성화
+        if not youtube_api_key and not mock_mode:
+            self.logger.info("API 키가 없어 자동으로 Mock 모드를 활성화합니다")
+            self.mock_mode = True
+            mock_mode = True
+        
+        # YouTube API 클라이언트 초기화 (Mock 모드 지원)
+        try:
+            self.youtube_client = YouTubeAPIClient(api_key=youtube_api_key, mock_mode=mock_mode)
+        except ValueError as e:
+            if "API 키가 필요합니다" in str(e) and not mock_mode:
+                self.logger.warning("API 키 문제로 인해 Mock 모드로 전환합니다")
+                self.mock_mode = True
+                self.youtube_client = YouTubeAPIClient(api_key=None, mock_mode=True)
+            else:
+                raise
+        
         self.searcher = YouTubeChannelSearcher(self.youtube_client)
         
         # 매칭 및 점수 계산기
@@ -330,18 +459,27 @@ class ChannelDiscoveryEngine:
                 
                 elif method == "related_channels":
                     # 관련 채널 검색 (기존 채널 목록 필요)
-                    base_channels = DEFAULT_MEDIA_CHANNELS[:5]  # 상위 5개 미디어 채널
-                    
-                    for base_channel in base_channels:
-                        try:
-                            # 채널명으로 ID 찾기
-                            base_info = await self.youtube_client.get_channel_info(base_channel)
+                    if self.mock_mode:
+                        # Mock 모드에서는 가짜 기준 채널 사용
+                        base_channels = ['mock_base_1', 'mock_base_2', 'mock_base_3']
+                        for base_channel in base_channels:
                             related = await self.searcher.get_related_channels(
-                                base_info.channel_id, max_results=10
+                                base_channel, max_results=10
                             )
                             method_channels.extend(related)
-                        except:
-                            continue
+                    else:
+                        base_channels = DEFAULT_MEDIA_CHANNELS[:5]  # 상위 5개 미디어 채널
+                        
+                        for base_channel in base_channels:
+                            try:
+                                # 채널명으로 ID 찾기
+                                base_info = await self.youtube_client.get_channel_info(base_channel)
+                                related = await self.searcher.get_related_channels(
+                                    base_info.channel_id, max_results=10
+                                )
+                                method_channels.extend(related)
+                            except:
+                                continue
                 
                 all_channels.extend(method_channels)
                 

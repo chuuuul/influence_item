@@ -28,6 +28,10 @@ except ImportError:
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent.parent.parent
+
+# 환경변수 로드 (YouTube API 키 포함)
+sys.path.append(str(project_root))
+from dashboard.utils.env_loader import ensure_youtube_api_key
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
@@ -64,6 +68,15 @@ def main():
     
     st.title("🔍 신규 채널 탐색 시스템")
     st.markdown("**PRD 2.1 요구사항에 따른 채널 자동 탐색 및 평가**")
+    
+    # YouTube API 키 확인
+    try:
+        api_key = ensure_youtube_api_key()
+        st.success(f"✅ YouTube API 키 로드 완료: {api_key[:10]}...")
+    except Exception as e:
+        st.error(f"❌ YouTube API 키 오류: {str(e)}")
+        st.info("💡 .env 파일에 YOUTUBE_API_KEY를 설정하세요.")
+        st.stop()
     
     # 사이드바 메뉴
     with st.sidebar:

@@ -179,10 +179,11 @@ class YouTubeAPIClient:
     - API 할당량 관리 (일일 10,000 요청 제한)
     - 에러 처리 및 재시도 로직
     - 캐싱 메커니즘으로 중복 요청 방지
+    - Mock 모드 지원 (API 키 없이도 동작)
     """
     
     def __init__(self, api_key: Optional[str] = None, quota_manager: Optional[QuotaManager] = None,
-                 encrypted_key_name: str = "youtube_api_key"):
+                 encrypted_key_name: str = "youtube_api_key", mock_mode: bool = False):
         """
         YouTube API 클라이언트 초기화
         
@@ -193,23 +194,35 @@ class YouTubeAPIClient:
         """
         self.key_manager = get_key_manager()
         self.encrypted_key_name = encrypted_key_name
+        self.mock_mode = mock_mode
         
-        # API 키 초기화 (암호화된 저장소 우선)
-        self.api_key = self._get_secure_api_key(api_key)
-        if not self.api_key:
-            raise ValueError("YouTube API 키가 필요합니다. 암호화된 저장소에 저장하거나 직접 제공하세요.")
+        # Mock 모드에서는 API 키 없이 동작
+        if mock_mode:
+            self.api_key = "MOCK_API_KEY"
+            self.youtube = None
+            self.logger = self._setup_logger()
+            self.logger.info("Mock 모드로 YouTube API 클라이언트 초기화")
+        else:
+            self.logger = self._setup_logger()
+            # API 키 초기화 (암호화된 저장소 우선)
+            self.api_key = self._get_secure_api_key(api_key)
+            if not self.api_key:
+                raise ValueError("YouTube API 키가 필요합니다. 암호화된 저장소에 저장하거나 직접 제공하세요.")
         
-        self.quota_manager = quota_manager or QuotaManager()
-        self.logger = self._setup_logger()
+            self.quota_manager = quota_manager or QuotaManager()
+            
+            # YouTube API 서비스 초기화 (암호화된 키 사용)
+            try:
+                self.youtube = build('youtube', 'v3', developerKey=self.api_key)
+                self.logger.info("YouTube API 클라이언트 초기화 완료 (암호화된 키 사용)")
+            except GoogleAuthError as e:
+                raise YouTubeAPIError(f"YouTube API 인증 실패: {str(e)}")
+            except Exception as e:
+                raise YouTubeAPIError(f"YouTube API 클라이언트 초기화 실패: {str(e)}")
         
-        # YouTube API 서비스 초기화 (암호화된 키 사용)
-        try:
-            self.youtube = build('youtube', 'v3', developerKey=self.api_key)
-            self.logger.info("YouTube API 클라이언트 초기화 완료 (암호화된 키 사용)")
-        except GoogleAuthError as e:
-            raise YouTubeAPIError(f"YouTube API 인증 실패: {str(e)}")
-        except Exception as e:
-            raise YouTubeAPIError(f"YouTube API 클라이언트 초기화 실패: {str(e)}")
+        # 공통 초기화
+        if not hasattr(self, 'quota_manager'):
+            self.quota_manager = quota_manager or QuotaManager()
         
         # LRU 캐시 설정
         self.max_cache_size = 1000  # 최대 캐시 항목 수
@@ -374,7 +387,7 @@ class YouTubeAPIClient:
     
     def _get_secure_api_key(self, provided_key: Optional[str] = None) -> str:
         """
-        보안 API 키 조회
+        보안 API 키 조회 (Mock 모드 고려)
         
         Args:
             provided_key: 직접 제공된 키 (선택사항)
@@ -382,6 +395,10 @@ class YouTubeAPIClient:
         Returns:
             API 키 문자열
         """
+        # Mock 모드에서는 키 검증 생략
+        if self.mock_mode:
+            return "MOCK_API_KEY"
+        
         # 1. 직접 제공된 키가 있으면 사용 (그리고 암호화 저장)
         if provided_key:
             self.logger.info("직접 제공된 API 키 사용 및 암호화 저장")
@@ -509,7 +526,7 @@ class YouTubeAPIClient:
     
     async def _retry_request(self, func, *args, **kwargs):
         """
-        재시도 로직을 포함한 API 요청
+        재시도 로직을 포함한 API 요청 (Mock 모드 지원)
         
         Args:
             func: 실행할 함수
@@ -521,6 +538,10 @@ class YouTubeAPIClient:
         Raises:
             YouTubeAPIError: 모든 재시도 실패 시
         """
+        # Mock 모드에서는 Mock 데이터 반환
+        if self.mock_mode:
+            return await self._get_mock_response(func.__name__, *args, **kwargs)
+        
         last_error = None
         
         for attempt in range(self.max_retries + 1):
@@ -574,6 +595,128 @@ class YouTubeAPIClient:
         if last_error:
             self._log_error_safely(str(last_error), "모든 재시도 실패")
         raise YouTubeAPIError(f"모든 재시도 실패")
+    
+    async def _get_mock_response(self, func_name: str, *args, **kwargs):
+        """
+        Mock 모드용 응답 생성
+        
+        Args:
+            func_name: 호출된 함수명
+            *args, **kwargs: 함수 인자
+            
+        Returns:
+            Mock 응답 데이터
+        """
+        import random
+        import time
+        
+        # 함수명에 따른 Mock 데이터 생성
+        if "videos" in func_name.lower():
+            return {
+                'items': [{
+                    'id': 'mock_video_id',
+                    'snippet': {
+                        'title': 'Mock 영상 제목 - 뷰티 리뷰',
+                        'description': 'Mock 영상 설명입니다. 이것은 테스트용 데이터입니다.',
+                        'publishedAt': '2025-06-01T10:00:00Z',
+                        'channelId': 'mock_channel_id',
+                        'channelTitle': 'Mock 뷰티 채널',
+                        'categoryId': '26',  # Howto & Style
+                        'tags': ['뷰티', '메이크업', '리뷰'],
+                        'defaultLanguage': 'ko',
+                        'thumbnails': {
+                            'high': {
+                                'url': 'https://example.com/mock_thumbnail.jpg'
+                            }
+                        }
+                    },
+                    'statistics': {
+                        'viewCount': str(random.randint(10000, 1000000)),
+                        'likeCount': str(random.randint(100, 10000)),
+                        'commentCount': str(random.randint(10, 1000))
+                    },
+                    'contentDetails': {
+                        'duration': 'PT10M30S'
+                    }
+                }]
+            }
+        
+        elif "channels" in func_name.lower():
+            return {
+                'items': [{
+                    'id': 'mock_channel_id',
+                    'snippet': {
+                        'title': 'Mock 뷰티 채널',
+                        'description': 'Mock 채널 설명입니다. 뷰티와 패션 콘텐츠를 다룹니다.',
+                        'publishedAt': '2020-01-01T00:00:00Z',
+                        'country': 'KR',
+                        'customUrl': '@mockbeauty',
+                        'thumbnails': {
+                            'high': {
+                                'url': 'https://example.com/mock_channel_thumb.jpg'
+                            }
+                        }
+                    },
+                    'statistics': {
+                        'subscriberCount': str(random.randint(10000, 500000)),
+                        'videoCount': str(random.randint(50, 500)),
+                        'viewCount': str(random.randint(1000000, 10000000))
+                    },
+                    'brandingSettings': {
+                        'channel': {
+                            'keywords': '뷰티,메이크업,패션,스킨케어'
+                        }
+                    }
+                }]
+            }
+        
+        elif "search" in func_name.lower():
+            # 채널 타입 검색
+            if kwargs.get('type') == 'channel':
+                return {
+                    'items': [{
+                        'id': {
+                            'kind': 'youtube#channel',
+                            'channelId': 'mock_search_channel_id'
+                        },
+                        'snippet': {
+                            'channelId': 'mock_search_channel_id',
+                            'title': 'Mock 검색 채널',
+                            'description': 'Mock 검색 결과 채널',
+                            'publishedAt': '2021-01-01T00:00:00Z',
+                            'thumbnails': {
+                                'high': {
+                                    'url': 'https://example.com/mock_search_thumb.jpg'
+                                }
+                            }
+                        }
+                    }]
+                }
+            else:
+                # 비디오 검색
+                return {
+                    'items': [{
+                        'id': {
+                            'kind': 'youtube#video',
+                            'videoId': 'mock_search_video_id'
+                        },
+                        'snippet': {
+                            'title': 'Mock 검색 영상',
+                            'description': 'Mock 검색 결과 영상',
+                            'publishedAt': '2025-06-01T10:00:00Z',
+                            'channelId': 'mock_channel_id',
+                            'channelTitle': 'Mock 채널',
+                            'thumbnails': {
+                                'high': {
+                                    'url': 'https://example.com/mock_video_thumb.jpg'
+                                }
+                            }
+                        }
+                    }]
+                }
+        
+        # 기본 응답
+        return {'items': []}
     
     async def get_video_info(self, video_url_or_id: str, use_cache: bool = True) -> VideoInfo:
         """
