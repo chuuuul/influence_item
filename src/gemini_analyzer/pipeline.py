@@ -29,6 +29,8 @@ from ..scoring.influencer_analyzer import ChannelMetrics
 from .models import TargetTimeframe
 from ..schema.models import ProductRecommendationCandidate, SourceInfo, CandidateInfo, MonetizationInfo, StatusInfo, ScoreDetails
 from ..schema.formatters import APIResponseFormatter
+from ..youtube_api.youtube_client import YouTubeAPIClient
+from ..youtube_api.quota_manager import QuotaManager
 
 
 class PipelineStatus(Enum):
@@ -76,6 +78,17 @@ class AIAnalysisPipeline:
         self.state_manager = StateManager(config)
         self.monetization_service = MonetizationService()
         self.score_calculator = ScoreCalculator()
+        
+        # YouTube API 클라이언트 초기화
+        try:
+            self.youtube_api_client = YouTubeAPIClient(
+                api_key=config.YOUTUBE_API_KEY,
+                quota_manager=QuotaManager(daily_limit=config.YOUTUBE_API_DAILY_QUOTA)
+            )
+            self.logger.info("YouTube API 클라이언트 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"YouTube API 클라이언트 초기화 실패 (기본값 사용): {str(e)}")
+            self.youtube_api_client = None
         
         # 상태 관리
         self.current_status = PipelineStatus.PENDING
@@ -715,16 +728,56 @@ class AIAnalysisPipeline:
             # 매핑 실패 시 원본 결과 반환
             return analysis_results
     
-    def _map_to_prd_schema(self, result: Dict[str, Any], video_url: str) -> Dict[str, Any]:
-        """개별 결과를 PRD 완전한 JSON 스키마로 매핑"""
-        from datetime import datetime
-        import re
+    async def _get_video_metadata(self, video_url: str) -> Dict[str, Any]:
+        """YouTube API를 사용하여 비디오 메타데이터 추출"""
+        try:
+            if self.youtube_api_client:
+                video_info = await self.youtube_api_client.get_video_info(video_url)
+                channel_info = await self.youtube_api_client.get_channel_info(video_info.channel_id)
+                
+                # 업로드 날짜 포맷팅
+                try:
+                    upload_date = datetime.fromisoformat(video_info.published_at.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                except:
+                    upload_date = datetime.now().strftime('%Y-%m-%d')
+                
+                return {
+                    'video_title': video_info.title,
+                    'channel_name': video_info.channel_title,
+                    'channel_id': video_info.channel_id,
+                    'upload_date': upload_date,
+                    'view_count': video_info.view_count,
+                    'like_count': video_info.like_count,
+                    'subscriber_count': channel_info.subscriber_count
+                }
+            else:
+                self.logger.warning("YouTube API 클라이언트가 없어 기본 메타데이터 사용")
+                
+        except Exception as e:
+            self.logger.warning(f"YouTube API를 통한 비디오 메타데이터 추출 실패: {str(e)}")
         
-        # 비디오 URL에서 채널명과 제목 추출 (임시 구현)
-        # TODO: 실제 YouTube API로 교체
+        # API 사용 불가능한 경우 기본값 반환
+        import re
         url_pattern = r'youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
         video_id_match = re.search(url_pattern, video_url)
         video_id = video_id_match.group(1) if video_id_match else "unknown"
+        
+        return {
+            'video_title': f'영상 제목 ({video_id})',
+            'channel_name': '알려지지 않은 채널',
+            'channel_id': 'unknown',
+            'upload_date': datetime.now().strftime('%Y-%m-%d'),
+            'view_count': 0,
+            'like_count': 0,
+            'subscriber_count': 0
+        }
+    
+    async def _map_to_prd_schema(self, result: Dict[str, Any], video_url: str) -> Dict[str, Any]:
+        """개별 결과를 PRD 완전한 JSON 스키마로 매핑"""
+        from datetime import datetime
+        
+        # YouTube API를 통한 실제 비디오 메타데이터 추출
+        video_metadata = await self._get_video_metadata(video_url)
         
         candidate_info = result.get('candidate_info', {})
         monetization_info = result.get('monetization_info', {})
@@ -735,11 +788,11 @@ class AIAnalysisPipeline:
         
         return {
             "source_info": {
-                "celebrity_name": result.get('source_info', {}).get('celebrity_name', '알려지지 않은 연예인'),
-                "channel_name": result.get('source_info', {}).get('channel_name', '알려지지 않은 채널'),
-                "video_title": result.get('source_info', {}).get('video_title', '영상 제목'),
+                "celebrity_name": result.get('source_info', {}).get('celebrity_name', video_metadata['channel_name']),
+                "channel_name": video_metadata['channel_name'],
+                "video_title": video_metadata['video_title'],
                 "video_url": video_url,
-                "upload_date": result.get('source_info', {}).get('upload_date', datetime.now().strftime('%Y-%m-%d'))
+                "upload_date": video_metadata['upload_date']
             },
             "candidate_info": {
                 "product_name_ai": candidate_info.get('product_name_ai', ''),
@@ -778,10 +831,44 @@ class AIAnalysisPipeline:
             "updated_at": now
         }
     
-    def _extract_channel_metrics(self, video_url: str) -> ChannelMetrics:
-        """비디오 URL에서 채널 메트릭스 추출 (임시 구현)"""
-        # TODO: 실제 YouTube API 또는 웹 스크래핑으로 채널 정보 수집
-        # 현재는 기본값으로 설정
+    async def _extract_channel_metrics(self, video_url: str) -> ChannelMetrics:
+        """비디오 URL에서 채널 메트릭스 추출"""
+        try:
+            if self.youtube_api_client:
+                # YouTube API를 사용하여 실제 채널 정보 추출
+                channel_info = await self.youtube_api_client.get_channel_info_from_video(video_url)
+                
+                # 채널 생성일로부터 개월 수 계산
+                from datetime import datetime
+                try:
+                    published_date = datetime.fromisoformat(channel_info.published_at.replace('Z', '+00:00'))
+                    current_date = datetime.now(published_date.tzinfo)
+                    channel_age_months = max(1, int((current_date - published_date).days / 30.44))
+                except:
+                    channel_age_months = 24  # 기본값
+                
+                # 평균 영상 조회수 계산 (전체 조회수 / 영상 수)
+                avg_video_views = channel_info.view_count // max(1, channel_info.video_count)
+                
+                # 참여율 추정 (실제 API로는 정확한 계산 어려움, 추정값 사용)
+                engagement_rate = min(0.1, max(0.01, (channel_info.subscriber_count / max(1, channel_info.view_count)) * 10))
+                
+                return ChannelMetrics(
+                    subscriber_count=channel_info.subscriber_count,
+                    video_view_count=avg_video_views,
+                    video_count=channel_info.video_count,
+                    channel_age_months=channel_age_months,
+                    engagement_rate=engagement_rate,
+                    verified_status=channel_info.verified
+                )
+                
+            else:
+                self.logger.warning("YouTube API 클라이언트가 없어 기본값 사용")
+                
+        except Exception as e:
+            self.logger.warning(f"YouTube API를 통한 채널 정보 추출 실패, 기본값 사용: {str(e)}")
+        
+        # YouTube API 사용 불가능한 경우 기본값 반환
         return ChannelMetrics(
             subscriber_count=100000,  # 기본값 10만
             video_view_count=50000,   # 기본값 5만

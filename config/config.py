@@ -19,6 +19,7 @@ class Config:
     
     # API 키
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", os.getenv("GOOGLE_API_KEY", ""))  # YouTube Data API v3 키 (Google API 키와 동일할 수 있음)
     COUPANG_ACCESS_KEY: str = os.getenv("COUPANG_ACCESS_KEY", "")
     COUPANG_SECRET_KEY: str = os.getenv("COUPANG_SECRET_KEY", "")
     
@@ -93,6 +94,14 @@ class Config:
     TEXT_SIMILARITY_THRESHOLD: float = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.6"))
     FUSION_CONFIDENCE_THRESHOLD: float = float(os.getenv("FUSION_CONFIDENCE_THRESHOLD", "0.7"))
     
+    # YouTube Data API v3 설정
+    YOUTUBE_API_DAILY_QUOTA: int = int(os.getenv("YOUTUBE_API_DAILY_QUOTA", "10000"))  # 일일 할당량
+    YOUTUBE_API_TIMEOUT: int = int(os.getenv("YOUTUBE_API_TIMEOUT", "30"))
+    YOUTUBE_API_MAX_RETRIES: int = int(os.getenv("YOUTUBE_API_MAX_RETRIES", "3"))
+    YOUTUBE_API_RETRY_DELAY: float = float(os.getenv("YOUTUBE_API_RETRY_DELAY", "1.0"))
+    YOUTUBE_API_CACHE_TTL: int = int(os.getenv("YOUTUBE_API_CACHE_TTL", "3600"))  # 1시간 캐시
+    YOUTUBE_API_ENABLE_CACHE: bool = os.getenv("YOUTUBE_API_ENABLE_CACHE", "true").lower() == "true"
+    
     # 쿠팡 파트너스 API 설정
     COUPANG_API_TIMEOUT: int = int(os.getenv("COUPANG_API_TIMEOUT", "30"))
     COUPANG_MAX_RETRIES: int = int(os.getenv("COUPANG_MAX_RETRIES", "3"))
@@ -123,6 +132,10 @@ class Config:
         """설정 유효성 검사"""
         if not cls.GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
+        
+        # YouTube API 키 확인 (GOOGLE_API_KEY로 대체 가능)
+        if not cls.YOUTUBE_API_KEY:
+            raise ValueError("YOUTUBE_API_KEY 환경 변수가 설정되지 않았습니다. GOOGLE_API_KEY 또는 YOUTUBE_API_KEY를 설정하세요.")
             
         # 쿠팡 API 키는 선택사항이지만 둘 다 설정되어야 함
         if bool(cls.COUPANG_ACCESS_KEY) != bool(cls.COUPANG_SECRET_KEY):

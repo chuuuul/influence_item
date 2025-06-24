@@ -21,7 +21,7 @@ sys.path.insert(0, str(project_root))
 try:
     from dashboard.pages.monetizable_candidates import render_monetizable_candidates
     from dashboard.pages.filtered_products import render_filtered_products
-    from dashboard.pages.ai_content_generator import render_ai_content_generator
+    from dashboard.pages.ai_content_generator_simple import render_ai_content_generator
     from dashboard.pages.api_usage_tracking import main as render_api_usage_tracking
     from dashboard.pages.budget_management import main as render_budget_management
     from dashboard.components.detail_view import render_detail_view
@@ -154,13 +154,30 @@ def initialize_app():
     # JavaScript를 페이지에 삽입
     st.components.v1.html(keyboard_shortcuts, height=0)
     
-    # 커스텀 CSS 스타일 (성능 최적화 및 반응형)
+    # 커스텀 CSS 스타일 (성능 최적화 및 반응형 + 다크모드 지원)
     st.markdown("""
     <style>
+    /* 다크모드 지원 */
+    [data-theme="dark"] {
+        --text-color: #fafafa;
+        --bg-color: #0e1117;
+        --card-bg: #262730;
+        --border-color: #30363d;
+    }
+    
+    /* 라이트모드 기본값 */
+    :root {
+        --text-color: #262626;
+        --bg-color: #ffffff;
+        --card-bg: #ffffff;
+        --border-color: #dee2e6;
+    }
+    
     /* 메인 앱 스타일 */
     .main .block-container {
         padding-top: 2rem;
         max-width: 1200px;
+        color: var(--text-color);
     }
     
     .main-header {
@@ -188,12 +205,13 @@ def initialize_app():
     
     /* 메트릭 카드 */
     .metric-card {
-        background: white;
+        background: var(--card-bg);
         padding: 1.5rem;
         border-radius: 12px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.07);
         border-left: 4px solid #667eea;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
+        color: var(--text-color);
     }
     
     .metric-card:hover {
@@ -211,29 +229,48 @@ def initialize_app():
         letter-spacing: 0.5px;
     }
     
+    /* 라이트모드 상태 배지 */
     .status-pending { background-color: #fff3cd; color: #856404; }
     .status-processing { background-color: #d1ecf1; color: #0c5460; }
     .status-completed { background-color: #d4edda; color: #155724; }
     .status-failed { background-color: #f8d7da; color: #721c24; }
+    
+    /* 다크모드 상태 배지 */
+    [data-theme="dark"] .status-pending { background-color: #3d3929; color: #ffd700; }
+    [data-theme="dark"] .status-processing { background-color: #1f4e5c; color: #87ceeb; }
+    [data-theme="dark"] .status-completed { background-color: #2d4a3d; color: #90ee90; }
+    [data-theme="dark"] .status-failed { background-color: #4a2d2d; color: #ff6b6b; }
     
     /* 활동 카드 */
     .activity-card {
         padding: 1rem;
         margin: 0.5rem 0;
         border-left: 3px solid #667eea;
-        background: #f8f9fa;
+        background: var(--card-bg);
         border-radius: 8px;
         transition: background-color 0.2s ease;
+        color: var(--text-color);
     }
     
     .activity-card:hover {
-        background: #e9ecef;
+        background: var(--border-color);
     }
     
     .activity-time {
-        color: #6c757d;
+        color: var(--text-color);
+        opacity: 0.7;
         font-size: 0.85rem;
         font-weight: 500;
+    }
+    
+    /* 다크모드 활동 카드 */
+    [data-theme="dark"] .activity-card {
+        background: #262730;
+        border-color: #667eea;
+    }
+    
+    [data-theme="dark"] .activity-card:hover {
+        background: #343541;
     }
     
     /* 버튼 스타일 */
@@ -402,7 +439,85 @@ def initialize_app():
             padding: 1rem;
         }
     }
+    
+    /* Streamlit 다크모드 지원 개선 */
+    [data-theme="dark"] .stMarkdown,
+    [data-theme="dark"] .stText,
+    [data-theme="dark"] .metric-label,
+    [data-theme="dark"] .metric-value,
+    [data-theme="dark"] .element-container,
+    [data-theme="dark"] .stAlert > div,
+    [data-theme="dark"] .stInfo > div,
+    [data-theme="dark"] .stSuccess > div,
+    [data-theme="dark"] .stWarning > div,
+    [data-theme="dark"] .stError > div {
+        color: #fafafa !important;
+    }
+    
+    [data-theme="dark"] .stAlert,
+    [data-theme="dark"] .stInfo,
+    [data-theme="dark"] .stSuccess,
+    [data-theme="dark"] .stWarning,
+    [data-theme="dark"] .stError {
+        background-color: #262730 !important;
+        border-color: #30363d !important;
+    }
+    
+    /* 다크모드에서 메트릭 카드 텍스트 개선 */
+    [data-theme="dark"] .metric-container {
+        color: #fafafa !important;
+    }
+    
+    [data-theme="dark"] .metric-container [data-testid="metric-container"] {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    [data-theme="dark"] .metric-container [data-testid="metric-container"] > div {
+        color: #fafafa !important;
+    }
+    
+    /* 다크모드 사이드바 개선 */
+    [data-theme="dark"] .stSidebar .stMarkdown,
+    [data-theme="dark"] .stSidebar .stMetric {
+        color: #fafafa !important;
+    }
+    
+    /* JavaScript로 다크모드 감지 및 적용 */
+    .dark-mode-detector {
+        display: none;
+    }
     </style>
+    
+    <script>
+    // 다크모드 감지 및 자동 적용
+    function detectAndApplyDarkMode() {
+        // Streamlit의 다크모드 상태 감지
+        const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const streamlitApp = document.querySelector('.stApp');
+        
+        if (streamlitApp) {
+            const computedStyle = window.getComputedStyle(streamlitApp);
+            const bgColor = computedStyle.backgroundColor;
+            
+            // 배경색이 어두우면 다크모드로 판단
+            if (bgColor === 'rgb(14, 17, 23)' || bgColor === 'rgb(38, 39, 48)') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        }
+    }
+    
+    // 페이지 로드 시 및 주기적으로 다크모드 감지
+    document.addEventListener('DOMContentLoaded', detectAndApplyDarkMode);
+    setInterval(detectAndApplyDarkMode, 1000);
+    
+    // 테마 변경 감지
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', detectAndApplyDarkMode);
+    }
+    </script>
     """, unsafe_allow_html=True)
 
 def render_breadcrumb():

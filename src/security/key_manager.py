@@ -207,6 +207,9 @@ class KeyManager:
             # 새 키 저장
             success = self.encrypt_key(key_name, new_key_value)
             if success:
+                # 캐시 클리어 (로테이션 후 새 키가 바로 로드되도록)
+                if key_name in self.key_cache:
+                    del self.key_cache[key_name]
                 logger.info(f"API 키 '{key_name}' 로테이션 완료")
             
             return success
