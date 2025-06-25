@@ -92,3 +92,6 @@ temp/product_images/
 # Screenshots
 screenshot/
 screenshots/
+
+# Monitoring data
+monitoring_data/
