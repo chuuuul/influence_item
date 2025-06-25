@@ -94,6 +94,9 @@ class Config:
     TEXT_SIMILARITY_THRESHOLD: float = float(os.getenv("TEXT_SIMILARITY_THRESHOLD", "0.6"))
     FUSION_CONFIDENCE_THRESHOLD: float = float(os.getenv("FUSION_CONFIDENCE_THRESHOLD", "0.7"))
     
+    # PPL 콘텐츠 필터링 설정
+    PPL_FILTER_THRESHOLD: float = float(os.getenv("PPL_FILTER_THRESHOLD", "0.7"))
+    
     # YouTube Data API v3 설정
     YOUTUBE_API_DAILY_QUOTA: int = int(os.getenv("YOUTUBE_API_DAILY_QUOTA", "10000"))  # 일일 할당량
     YOUTUBE_API_TIMEOUT: int = int(os.getenv("YOUTUBE_API_TIMEOUT", "30"))

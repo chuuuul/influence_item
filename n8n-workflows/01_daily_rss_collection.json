@@ -1,0 +1,315 @@
+{
+  "name": "01. Daily RSS Feed Collection",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-cron-7am",
+      "name": "Daily Cron (7 AM)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Channel List",
+          "mode": "name"
+        },
+        "options": {
+          "range": "A:E"
+        }
+      },
+      "id": "read-channel-list",
+      "name": "Read Channel List from Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 채널 목록에서 RSS 피드 URL 생성 및 필터링\nconst channelData = $input.all();\nconst rssUrls = [];\n\nfor (const row of channelData) {\n  const channelId = row.json.channel_id;\n  const channelName = row.json.channel_name;\n  const channelType = row.json.channel_type;\n  const status = row.json.status;\n  const celebrityName = row.json.celebrity_name;\n  \n  // 활성 상태인 채널만 처리\n  if (status === 'active' && channelId) {\n    rssUrls.push({\n      channel_id: channelId,\n      channel_name: channelName,\n      channel_type: channelType,\n      celebrity_name: celebrityName,\n      rss_url: `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`\n    });\n  }\n}\n\nconsole.log(`활성 채널 ${rssUrls.length}개의 RSS 피드 준비 완료`);\n\nreturn rssUrls.map(url => ({ json: url }));"
+      },
+      "id": "prepare-rss-urls",
+      "name": "Prepare RSS Feed URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.rss_url }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "fetch-rss-feed",
+      "name": "Fetch RSS Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// RSS XML 파싱하여 최신 영상 추출\nconst rssXml = $json.body;\nconst channelInfo = $('Prepare RSS Feed URLs').item.json;\nconst DOMParser = require('xmldom').DOMParser;\n\n// XML 파싱\nlet newVideos = [];\ntry {\n  const parser = new DOMParser();\n  const xmlDoc = parser.parseFromString(rssXml, 'text/xml');\n  const entries = xmlDoc.getElementsByTagName('entry');\n  \n  // 지난 24시간 내 업로드된 영상만 필터링\n  const yesterday = new Date();\n  yesterday.setDate(yesterday.getDate() - 1);\n  \n  for (let i = 0; i < Math.min(entries.length, 10); i++) {\n    const entry = entries[i];\n    const videoId = entry.getElementsByTagName('yt:videoId')[0]?.textContent;\n    const title = entry.getElementsByTagName('title')[0]?.textContent;\n    const published = entry.getElementsByTagName('published')[0]?.textContent;\n    const author = entry.getElementsByTagName('author')[0]?.getElementsByTagName('name')[0]?.textContent;\n    \n    if (videoId && title && published) {\n      const publishDate = new Date(published);\n      \n      // 24시간 내 업로드된 영상인지 확인\n      if (publishDate >= yesterday) {\n        // 미디어 채널의 경우 연예인 이름이 제목에 포함된 경우만\n        let shouldInclude = true;\n        if (channelInfo.channel_type === 'media' && channelInfo.celebrity_name) {\n          shouldInclude = title.toLowerCase().includes(channelInfo.celebrity_name.toLowerCase());\n        }\n        \n        // YouTube Shorts 제외 (PRD 요구사항)\n        const isShorts = title.toLowerCase().includes('#shorts') || \n                        title.toLowerCase().includes('shorts') ||\n                        title.includes('🩳');\n        \n        if (shouldInclude && !isShorts) {\n          newVideos.push({\n            video_id: videoId,\n            video_title: title,\n            video_url: `https://www.youtube.com/watch?v=${videoId}`,\n            channel_id: channelInfo.channel_id,\n            channel_name: channelInfo.channel_name,\n            channel_type: channelInfo.channel_type,\n            celebrity_name: channelInfo.celebrity_name,\n            published_date: published,\n            author: author,\n            discovery_date: new Date().toISOString()\n          });\n        }\n      }\n    }\n  }\n} catch (error) {\n  console.error('RSS 파싱 오류:', error);\n}\n\nconsole.log(`${channelInfo.channel_name}: ${newVideos.length}개 신규 영상 발견`);\n\nreturn newVideos.map(video => ({ json: video }));"
+      },
+      "id": "parse-rss-feed",
+      "name": "Parse RSS Feed for New Videos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-new-videos",
+              "leftValue": "={{ $json.video_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-new-videos",
+      "name": "Check If New Videos Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.CHANNEL_DISCOVERY_API_URL || 'http://localhost:5001' }}/analyze/video",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            },
+            {
+              "name": "video_id",
+              "value": "={{ $json.video_id }}"
+            },
+            {
+              "name": "channel_info",
+              "value": "={{ JSON.stringify({channel_id: $json.channel_id, channel_name: $json.channel_name, channel_type: $json.channel_type, celebrity_name: $json.celebrity_name}) }}"
+            },
+            {
+              "name": "priority",
+              "value": "normal"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "trigger-video-analysis",
+      "name": "Trigger Video Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "📺 새로운 영상 발견!"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([{\"type\": \"header\", \"text\": {\"type\": \"plain_text\", \"text\": \"📺 새로운 영상 발견!\"}}, {\"type\": \"section\", \"fields\": [{\"type\": \"mrkdwn\", \"text\": \"*채널:*\\n\" + $json.channel_name}, {\"type\": \"mrkdwn\", \"text\": \"*연예인:*\\n\" + ($json.celebrity_name || 'N/A')}, {\"type\": \"mrkdwn\", \"text\": \"*영상 제목:*\\n\" + $json.video_title}, {\"type\": \"mrkdwn\", \"text\": \"*업로드:*\\n\" + new Date($json.published_date).toLocaleString('ko-KR')}]}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"🔗 <\" + $json.video_url + \"|영상 보기> | 🤖 분석 시작됨\"}}, {\"type\": \"context\", \"elements\": [{\"type\": \"mrkdwn\", \"text\": \"📅 \" + new Date().toLocaleString('ko-KR') + \" | 🤖 자동 수집\"}]}]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-new-video",
+      "name": "Notify New Video Found",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "✅ 일일 RSS 수집 완료 - 새로운 영상 없음"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([{\"type\": \"header\", \"text\": {\"type\": \"plain_text\", \"text\": \"✅ 일일 RSS 수집 완료\"}}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"📊 *결과:* 새로운 영상이 발견되지 않았습니다.\\n\\n💡 *참고:* 지난 24시간 내 업로드된 영상이 없거나, 이미 분석 완료된 영상들입니다.\"}}, {\"type\": \"context\", \"elements\": [{\"type\": \"mrkdwn\", \"text\": \"📅 \" + new Date().toLocaleString('ko-KR') + \" | 🤖 자동 수집\"}]}]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-no-videos",
+      "name": "Notify No New Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1300, 500]
+    }
+  ],
+  "connections": {
+    "Daily Cron (7 AM)": {
+      "main": [
+        [
+          {
+            "node": "Read Channel List from Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Channel List from Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Prepare RSS Feed URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare RSS Feed URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS Feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS Feed": {
+      "main": [
+        [
+          {
+            "node": "Parse RSS Feed for New Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse RSS Feed for New Videos": {
+      "main": [
+        [
+          {
+            "node": "Check If New Videos Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If New Videos Found": {
+      "main": [
+        [
+          {
+            "node": "Trigger Video Analysis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify New Video Found",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify No New Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "createdAt": "2025-06-25T07:00:00.000Z",
+  "updatedAt": "2025-06-25T07:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "tags": []
+}

@@ -24,6 +24,7 @@ class CandidateStatus(str, Enum):
     NEEDS_REVIEW = "needs_review"
     HIGH_PPL_RISK = "high_ppl_risk"
     PPL_REVIEW_REQUIRED = "ppl_review_required"
+    FILTERED_PPL = "filtered_ppl"
     FILTERED_NO_COUPANG = "filtered_no_coupang"
     LOW_SCORE_FILTERED = "low_score_filtered"
     APPROVED = "approved"

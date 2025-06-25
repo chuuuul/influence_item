@@ -31,16 +31,36 @@ class OCRProcessor:
     
     def __init__(self, config: Optional[Config] = None, languages: List[str] = None):
         """
-        OCR 프로세서 초기화
+        OCR 프로세서 초기화 (한국어 특화 및 성능 최적화)
         
         Args:
             config: 설정 객체
-            languages: 지원 언어 리스트 (기본값: ['ko', 'en'])
+            languages: 지원 언어 리스트 (기본값: ['ko', 'en'] - 한국어 우선)
         """
         self.config = config or Config()
-        self.languages = languages or ['ko', 'en']
+        self.languages = languages or ['ko', 'en']  # 한국어 우선 순서
         self.logger = self._setup_logger()
         self.preprocessor = ImagePreprocessor(config)
+        
+        # 성능 최적화 설정
+        self.text_cache = {}  # OCR 결과 캐싱
+        self.cache_max_size = 50
+        
+        # 한국어 특화 설정
+        self.korean_confidence_boost = 0.1  # 한국어 텍스트 신뢰도 가중치
+        self.korean_patterns = [
+            r'[\u3131-\u318F]',  # 한글 자모
+            r'[\uAC00-\uD7AF]',  # 한글 음절
+            r'[\u1100-\u11FF]'   # 한글 자모 확장
+        ]
+        
+        # 브랜드 키워드 패턴 (제품 인식 정확도 향상)
+        self.brand_keywords = {
+            'cosmetics': ['크림', '세럼', '로션', '토너', '마스크', '에센스'],
+            'fashion': ['드레스', '자켓', '코트', '블라우스', '스커트'],
+            'accessories': ['백', '시계', '액세서리', '주얼리', '모자'],
+            'electronics': ['폰', '이어폰', '케이스', '충전기', '케이블']
+        }
         
         # GPU 최적화 초기화
         self.gpu_optimizer = None
@@ -58,7 +78,13 @@ class OCRProcessor:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL, 'INFO'))
+        
+        # LOG_LEVEL이 문자열인지 확인하고 기본값 사용
+        try:
+            log_level = self.config.LOG_LEVEL if isinstance(self.config.LOG_LEVEL, str) else 'INFO'
+            logger.setLevel(getattr(logging, log_level, logging.INFO))
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -111,32 +137,35 @@ class OCRProcessor:
     def extract_text_from_frame(
         self, 
         frame_image: Union[str, Path, Any],
-        preprocess: bool = True
+        preprocess: bool = True,
+        enable_cache: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        단일 프레임에서 텍스트 추출
+        단일 프레임에서 텍스트 추출 (한국어 특화 및 성능 최적화)
         
         Args:
             frame_image: 이미지 파일 경로 또는 numpy 배열
             preprocess: 전처리 적용 여부
+            enable_cache: 캐싱 활성화 여부
             
         Returns:
             추출된 텍스트 정보 리스트
         """
         if self.reader is None:
             self.logger.warning("EasyOCR 모델이 로드되지 않았습니다. 테스트 데이터를 반환합니다.")
-            return [
-                {
-                    'text': '테스트 제품명',
-                    'confidence': 0.95,
-                    'bbox': [[100, 50], [300, 50], [300, 100], [100, 100]],
-                    'language': 'ko'
-                }
-            ]
+            return self._get_test_korean_results()
         
         try:
             self.logger.debug("프레임 텍스트 추출 시작")
             start_time = time.time()
+            
+            # 캐시 키 생성
+            cache_key = None
+            if enable_cache and isinstance(frame_image, (str, Path)):
+                cache_key = f"{frame_image}_{preprocess}"
+                if cache_key in self.text_cache:
+                    self.logger.debug("캐시된 OCR 결과 반환")
+                    return self.text_cache[cache_key]
             
             # 이미지 로드 및 전처리
             if isinstance(frame_image, (str, Path)):
@@ -152,11 +181,23 @@ class OCRProcessor:
             else:
                 processed_image = image
             
-            # EasyOCR 텍스트 인식 실행
-            raw_results = self.reader.readtext(processed_image)
+            # EasyOCR 텍스트 인식 실행 (한국어 최적화)
+            raw_results = self.reader.readtext(
+                processed_image,
+                detail=1,  # 상세 정보 포함
+                paragraph=False,  # 단락 병합 비활성화
+                width_ths=0.7,  # 한국어 특화 너비 임계값
+                height_ths=0.7,  # 한국어 특화 높이 임계값
+                text_threshold=0.7,  # 텍스트 신뢰도 임계값
+                link_threshold=0.4   # 링크 임계값
+            )
             
-            # 결과 후처리
-            results = self._post_process_results(raw_results)
+            # 결과 후처리 (한국어 특화)
+            results = self._post_process_results_korean(raw_results)
+            
+            # 캐시 저장
+            if enable_cache and cache_key:
+                self._update_text_cache(cache_key, results)
             
             process_time = time.time() - start_time
             self.logger.debug(f"텍스트 추출 완료 - {len(results)}개 텍스트, 소요시간: {process_time:.2f}초")
@@ -205,9 +246,9 @@ class OCRProcessor:
             self.logger.error(f"배치 처리 실패: {str(e)}")
             return []
     
-    def _post_process_results(self, raw_results: List) -> List[Dict[str, Any]]:
+    def _post_process_results_korean(self, raw_results: List) -> List[Dict[str, Any]]:
         """
-        EasyOCR 결과 후처리 및 필터링
+        EasyOCR 결과 후처리 및 필터링 (한국어 특화)
         
         Args:
             raw_results: EasyOCR readtext() 원본 결과
@@ -223,35 +264,58 @@ class OCRProcessor:
         for item in raw_results:
             bbox, text, confidence = item
             
-            # 신뢰도 임계값 적용
-            confidence_threshold = getattr(self.config, 'OCR_CONFIDENCE_THRESHOLD', 0.5)
+            # 신뢰도 임계값 적용 (한국어 특화)
+            confidence_threshold = getattr(self.config, 'OCR_CONFIDENCE_THRESHOLD', 0.6)  # 0.5 -> 0.6
             if confidence < confidence_threshold:
                 continue
             
             # 노이즈 텍스트 제거
-            if self._is_noise_text(text):
+            if self._is_noise_text_korean(text):
                 continue
             
             # 텍스트 정리 및 정규화
-            cleaned_text = self._clean_text(text)
+            cleaned_text = self._clean_text_korean(text)
             if not cleaned_text.strip():
                 continue
             
-            # 언어 감지 (간단한 휴리스틱)
-            detected_language = self._detect_language(cleaned_text)
+            # 언어 감지 (한국어 특화)
+            detected_language = self._detect_language_enhanced(cleaned_text)
             
-            filtered_results.append({
+            # 한국어 텍스트 신뢰도 가중치 적용
+            if detected_language == 'ko':
+                confidence = min(1.0, confidence + self.korean_confidence_boost)
+            
+            # 브랜드/제품 관련 키워드 탐지
+            product_category = self._detect_product_category(cleaned_text)
+            is_brand_related = self._is_brand_related(cleaned_text)
+            
+            result_entry = {
                 'text': cleaned_text,
                 'confidence': round(confidence, 3),
                 'bbox': self._normalize_bbox(bbox),
                 'language': detected_language,
-                'area': self._calculate_bbox_area(bbox)
-            })
+                'area': self._calculate_bbox_area(bbox),
+                'product_category': product_category,
+                'is_brand_related': is_brand_related
+            }
+            
+            # 브랜드 관련 텍스트에 추가 가중치
+            if is_brand_related:
+                result_entry['confidence'] = min(1.0, result_entry['confidence'] * 1.15)  # 15% 가중치
+            
+            filtered_results.append(result_entry)
         
-        # 신뢰도 순으로 정렬
-        filtered_results.sort(key=lambda x: x['confidence'], reverse=True)
+        # 중요도 순으로 정렬 (브랜드 관련, 한국어, 신뢰도)
+        filtered_results.sort(
+            key=lambda x: (x['is_brand_related'], x['language'] == 'ko', x['confidence']), 
+            reverse=True
+        )
         
         return filtered_results
+    
+    def _post_process_results(self, raw_results: List) -> List[Dict[str, Any]]:
+        """기본 후처리 메서드 (호환성 유지)"""
+        return self._post_process_results_korean(raw_results)
     
     def _is_noise_text(self, text: str) -> bool:
         """
@@ -554,9 +618,142 @@ class OCRProcessor:
         
         return results
     
+    def _is_noise_text_korean(self, text: str) -> bool:
+        """한국어 특화 노이즈 텍스트 필터링"""
+        if not text or len(text.strip()) < 2:
+            return True
+        
+        cleaned = text.strip()
+        
+        # 한글 단일 자모 제거
+        import re
+        if re.match(r'^[\u3131-\u318F]$', cleaned):  # 단일 자모
+            return True
+        
+        # 숫자만 있는 경우
+        if cleaned.isdigit() and len(cleaned) < 3:
+            return True
+        
+        # 특수문자만 있는 경우
+        if all(not char.isalnum() and not ('\uac00' <= char <= '\ud7af') for char in cleaned):
+            return True
+        
+        # 반복 문자
+        if len(set(cleaned.lower())) == 1 and len(cleaned) > 2:
+            return True
+        
+        return False
+    
+    def _clean_text_korean(self, text: str) -> str:
+        """한국어 특화 텍스트 정리"""
+        if not text:
+            return ""
+        
+        import re
+        
+        # 기본 정리
+        cleaned = text.strip()
+        cleaned = ' '.join(cleaned.split())
+        
+        # 한국어 특수 문자 정리
+        cleaned = re.sub(r'[\u200B-\u200F\u2028-\u202F\u205F-\u206F]', '', cleaned)  # 보이지 않는 문자
+        
+        # 불필요한 기호 제거 (한국어 유지)
+        cleaned = re.sub(r'[^\w\s\u3131-\u318F\uAC00-\uD7AF\u1100-\u11FF\u3040-\u309F\u30A0-\u30FF-]', ' ', cleaned)
+        cleaned = ' '.join(cleaned.split())
+        
+        return cleaned
+    
+    def _detect_language_enhanced(self, text: str) -> str:
+        """향상된 언어 감지 (한국어 특화)"""
+        if not text:
+            return 'unknown'
+        
+        import re
+        
+        # 한글 문자 개수 세기
+        korean_chars = len(re.findall(r'[\u3131-\u318F\uAC00-\uD7AF\u1100-\u11FF]', text))
+        total_chars = len([char for char in text if char.isalnum() or ('\uac00' <= char <= '\ud7af')])
+        
+        if total_chars == 0:
+            return 'symbol'
+        
+        korean_ratio = korean_chars / total_chars
+        
+        # 한국어 비율이 20% 이상이면 한국어로 분류
+        if korean_ratio >= 0.2:
+            return 'ko'
+        elif korean_ratio > 0:
+            return 'mixed'  # 한영 혼용
+        else:
+            return 'en'
+    
+    def _detect_product_category(self, text: str) -> str:
+        """텍스트에서 제품 카테고리 탐지"""
+        text_lower = text.lower()
+        
+        for category, keywords in self.brand_keywords.items():
+            if any(keyword in text_lower for keyword in keywords):
+                return category
+        
+        return 'unknown'
+    
+    def _is_brand_related(self, text: str) -> bool:
+        """브랜드/제품 관련 텍스트 여부 판단"""
+        text_lower = text.lower()
+        
+        # 모든 카테고리의 키워드 검사
+        for keywords in self.brand_keywords.values():
+            if any(keyword in text_lower for keyword in keywords):
+                return True
+        
+        # 일반적인 제품 관련 단어
+        general_product_words = ['브랜드', '제품', '모델', '시리즈', '컷렉션']
+        if any(word in text_lower for word in general_product_words):
+            return True
+        
+        return False
+    
+    def _get_test_korean_results(self) -> List[Dict[str, Any]]:
+        """한국어 테스트 데이터 반환"""
+        return [
+            {
+                'text': '피부에 좋은 배리어 크림',
+                'confidence': 0.95,
+                'bbox': [[100, 50], [300, 50], [300, 100], [100, 100]],
+                'language': 'ko',
+                'area': 10000,
+                'product_category': 'cosmetics',
+                'is_brand_related': True
+            },
+            {
+                'text': 'COSRX',
+                'confidence': 0.92,
+                'bbox': [[320, 50], [400, 50], [400, 80], [320, 80]],
+                'language': 'en',
+                'area': 2400,
+                'product_category': 'cosmetics',
+                'is_brand_related': True
+            }
+        ]
+    
+    def _update_text_cache(self, cache_key: str, result: List[Dict[str, Any]]) -> None:
+        """텍스트 캐시 업데이트"""
+        if len(self.text_cache) >= self.cache_max_size:
+            # 가장 오래된 항목 제거
+            oldest_key = next(iter(self.text_cache))
+            del self.text_cache[oldest_key]
+        
+        self.text_cache[cache_key] = result
+    
+    def clear_text_cache(self) -> None:
+        """텍스트 캐시 초기화"""
+        self.text_cache.clear()
+        self.logger.debug("OCR 텍스트 캐시 초기화 완료")
+    
     def get_processor_info(self) -> Dict[str, Any]:
         """
-        프로세서 정보 반환
+        프로세서 정보 반환 (한국어 특화 정보 포함)
         
         Returns:
             프로세서 정보 딕셔너리
@@ -571,7 +768,11 @@ class OCRProcessor:
         return {
             'status': 'ready',
             'languages': self.languages,
+            'korean_optimized': True,
             'gpu_enabled': hasattr(self.config, 'USE_GPU') and self.config.USE_GPU,
-            'confidence_threshold': getattr(self.config, 'OCR_CONFIDENCE_THRESHOLD', 0.5),
-            'supported_formats': ['jpg', 'jpeg', 'png', 'bmp', 'tiff']
+            'confidence_threshold': getattr(self.config, 'OCR_CONFIDENCE_THRESHOLD', 0.6),
+            'korean_confidence_boost': self.korean_confidence_boost,
+            'supported_formats': ['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
+            'cache_size': len(self.text_cache),
+            'brand_categories': list(self.brand_keywords.keys())
         }

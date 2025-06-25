@@ -46,10 +46,27 @@ class GeminiFirstPassAnalyzer:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        
+        # 안전한 로그 레벨 설정
         try:
-            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
-            logger.setLevel(logging.INFO)  # 기본값 사용
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -80,60 +97,51 @@ class GeminiFirstPassAnalyzer:
             self.logger.error(f"Gemini 클라이언트 초기화 실패: {str(e)}")
             
     def _get_system_prompt(self) -> str:
-        """PRD 기반 시스템 프롬프트 반환"""
-        return """너는 지금부터 **'베테랑 유튜브 콘텐츠 큐레이터'** 역할을 수행한다. 너의 임무는 긴 영상 스크립트에서 시청자의 구매 욕구를 자극할 만한 '진짜 제품 추천' 구간만을 정확히 골라내는 것이다. 너는 단순 키워드 검색을 초월하여, 화자의 뉘앙스, 문장의 구조, 대화의 흐름 등 미묘한 '맥락적 신호'를 포착하는 최고의 전문가다.
+        """토큰 최적화된 정밀 프롬프트 시스템"""
+        return """You are an AI product recommendation detector with 95%+ accuracy.
 
-**중요한 패턴들:**
+**PRIORITY DETECTION PATTERNS:**
 
-1. **지칭 및 소개 패턴:** "제가 요즘 진짜 잘 쓰는 게 있는데...", "짠! 오늘 보여드릴 건 바로 이거예요."
-2. **상세 묘사 패턴:** "딱 열면 향이 확 나는데...", "발라보면 제형이 진짜 꾸덕해요."
-3. **경험 및 효과 공유 패턴:** "이거 쓰고 나서 피부가 완전 달라졌어요.", "아침에 화장이 진짜 잘 받아요."
-4. **소유 및 애착 표현 패턴:** "이건 제 파우치에 항상 들어있는 거예요.", "해외 나갈 때 없으면 불안한 아이템이에요."
+HIGH (0.8-1.0): "오늘 소개", "제가 쓰는", "써보니까", "진짜 좋아요"
+MEDIUM (0.6-0.8): "요즘 사용하는", "텍스처가", "다른 제품보다"
+LOW (0.4-0.6): "이런 제품", "친구가 추천"
 
-**주의사항:**
-- 제품명이 직접 언급되지 않아도 위 패턴이 나타나면 '추천의 시작'을 알리는 강력한 신호로 인지해야 한다.
-- 단순한 브랜드명 언급은 제외한다.
-- PPL이나 광고성 멘트는 신중하게 판단한다."""
+**EXCLUDE:** 단순 브랜드명, 뉴스 정보, 부정적 경험, 일반 카테고리
+
+**CONTEXT RULES:**
+- 앞뒤 3문장 분석
+- 30초-3분 지속성 확인
+- 중복 제거
+- 감정 강도 측정"""
 
     def _get_user_prompt(self, script_data: List[Dict[str, Any]]) -> str:
-        """사용자 프롬프트 생성"""
-        # 스크립트를 문자열로 변환
-        script_json = json.dumps(script_data, ensure_ascii=False, indent=2)
+        """토큰 최적화된 핵심 프롬프트 생성"""
+        # 스크립트 핵심 정보만 추출 (토큰 절약)
+        total_duration = max([seg.get('end', 0) for seg in script_data], default=0)
+        segment_count = len(script_data)
         
-        return f"""아래 [전체 스크립트]를 분석하여, 다음 [지시사항]과 [판단 기준]을 완벽하게 준수하여 결과를 출력해줘.
+        # 스크립트를 압축된 형태로 변환
+        compressed_script = self._compress_script_data(script_data)
+        
+        return f"""Analyze this script for product recommendation segments. Return JSON only.
 
-**[전체 스크립트]**
-{script_json}
+**SCRIPT:** {compressed_script}
 
-**[지시사항]**
+**REQUIREMENTS:**
+- Duration: {total_duration:.0f}s, Segments: {segment_count}
+- Min 15s, Max 300s per segment
+- Confidence ≥ 0.4
+- No duplicates
 
-1. 스크립트 전체를 읽고, 아래 **[판단 기준]**에 부합하는 모든 '제품 추천 의심 구간'을 찾아라.
-2. 각 구간에 대해, `start_time`, `end_time`, `reason`, `confidence_score`를 포함한 JSON 리스트로 결과를 반환해라.
-3. 추천 구간이 없다면, 빈 리스트 `[]`를 반환하고 다른 어떤 설명도 추가하지 마라.
+**SCORING:**
+Direct intro (+0.3), Personal use (+0.25), Effect mention (+0.2), Emotion (+0.15), Context (+0.1), Base (0.3)
 
-**[출력 형식]**
-다음과 같은 JSON 형식으로만 출력하라:
+**OUTPUT:**
 ```json
-[
-  {{
-    "start_time": 91.2,
-    "end_time": 125.8,
-    "reason": "지칭 패턴 탐지 - '제가 요즘 진짜 잘 쓰는 게' 표현 발견",
-    "confidence_score": 0.85
-  }}
-]
+[{{"start_time": N, "end_time": N, "reason": "pattern_evidence", "confidence_score": 0.XX}}]
 ```
 
-**[판단 기준]**
-
-제품명이 직접 언급되지 않아도, 아래와 같은 패턴이 나타나면 '추천의 시작'을 알리는 강력한 신호로 인지해야 한다:
-
-1. **지칭 패턴:** "제가 요즘 진짜 잘 쓰는 게 있는데...", "짠! 오늘 보여드릴 건 바로 이거예요."
-2. **묘사 패턴:** "딱 열면 향이 확 나는데...", "발라보면 제형이 진짜 꾸덕해요."
-3. **경험 패턴:** "이거 쓰고 나서 피부가 완전 달라졌어요.", "아침에 화장이 진짜 잘 받아요."
-4. **소유 패턴:** "이건 제 파우치에 항상 들어있는 거예요.", "해외 나갈 때 없으면 불안한 아이템이에요."
-
-**중요:** 단순한 브랜드명 언급이나 일반적인 대화는 제외하고, 명확한 추천 의도가 있는 구간만 선별하라."""
+Empty array [] if no recommendations found."""
 
     def analyze_script(self, script_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -171,6 +179,23 @@ class GeminiFirstPassAnalyzer:
             self.logger.error(f"Gemini 1차 분석 실패: {str(e)}")
             return []
     
+    def _compress_script_data(self, script_data: List[Dict[str, Any]]) -> str:
+        """스크립트 데이터를 토큰 효율적으로 압축"""
+        compressed_segments = []
+        for seg in script_data:
+            # 핵심 정보만 추출
+            start = seg.get('start', 0)
+            end = seg.get('end', 0) 
+            text = seg.get('text', '').strip()
+            
+            # 불필요한 내용 제거
+            if len(text) > 100:  # 긴 텍스트는 요약
+                text = text[:100] + "..."
+            
+            compressed_segments.append(f"{start:.0f}-{end:.0f}s: {text}")
+        
+        return " | ".join(compressed_segments)
+    
     def _call_gemini_api(self, user_prompt: str, max_retries: int = 3) -> str:
         """
         Gemini API 호출 (재시도 로직 포함)
@@ -193,8 +218,10 @@ class GeminiFirstPassAnalyzer:
                 response = self.model.generate_content(
                     user_prompt,
                     generation_config=genai.types.GenerationConfig(
-                        max_output_tokens=self.config.GEMINI_MAX_TOKENS,
-                        temperature=self.config.GEMINI_TEMPERATURE,
+                        max_output_tokens=min(self.config.GEMINI_MAX_TOKENS, 1024),  # 토큰 제한
+                        temperature=max(0.1, self.config.GEMINI_TEMPERATURE - 0.2),  # 낮은 temperature로 일관성 향상
+                        top_p=0.8,  # 추가 최적화
+                        top_k=20
                     ),
                 )
                 
@@ -300,7 +327,7 @@ class GeminiFirstPassAnalyzer:
     
     def _validate_candidate(self, candidate: Dict[str, Any]) -> bool:
         """
-        후보 데이터 유효성 검증
+        강화된 후보 데이터 유효성 검증
         
         Args:
             candidate: 후보 구간 데이터
@@ -322,7 +349,7 @@ class GeminiFirstPassAnalyzer:
             confidence_score = float(candidate['confidence_score'])
             reason = str(candidate['reason'])
             
-            # 논리적 유효성 검증
+            # 기본 논리적 유효성 검증
             if start_time < 0 or end_time < 0:
                 return False
             if start_time >= end_time:
@@ -330,6 +357,29 @@ class GeminiFirstPassAnalyzer:
             if confidence_score < 0 or confidence_score > 1:
                 return False
             if not reason.strip():
+                return False
+            
+            # 강화된 품질 검증
+            duration = end_time - start_time
+            
+            # 최소/최대 지속 시간 검증
+            if duration < 10:  # 10초 미만은 너무 짧음
+                self.logger.warning(f"구간이 너무 짧음: {duration:.1f}초")
+                return False
+            if duration > 300:  # 5분 초과는 너무 김
+                self.logger.warning(f"구간이 너무 김: {duration:.1f}초")
+                return False
+            
+            # 신뢰도 임계값 검증
+            if confidence_score < 0.4:  # 너무 낮은 신뢰도는 제외
+                self.logger.debug(f"신뢰도가 너무 낮음: {confidence_score:.2f}")
+                return False
+            
+            # 이유 품질 검증
+            reason_lower = reason.lower()
+            valid_patterns = ['직접', '소개', '추천', '사용', '경험', '효과', '애용', '선호', '만족']
+            if not any(pattern in reason_lower for pattern in valid_patterns):
+                self.logger.debug(f"유효한 패턴이 포함되지 않은 이유: {reason}")
                 return False
                 
             return True

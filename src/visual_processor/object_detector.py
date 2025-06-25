@@ -25,15 +25,15 @@ from config.config import Config
 
 
 class ObjectDetector:
-    """YOLO11 기반 객체 탐지 프로세서 클래스"""
+    """YOLO11 기반 고성능 객체 탐지 프로세서 클래스"""
     
-    def __init__(self, config: Optional[Config] = None, model_name: str = "yolo11n.pt", gpu_optimizer=None):
+    def __init__(self, config: Optional[Config] = None, model_name: str = "yolo11m.pt", gpu_optimizer=None):
         """
-        객체 탐지 프로세서 초기화
+        객체 탐지 프로세서 초기화 (성능 최적화)
         
         Args:
             config: 설정 객체
-            model_name: 사용할 YOLO 모델명 (기본값: yolo11n.pt)
+            model_name: 사용할 YOLO 모델명 (기본값: yolo11m.pt - 정확도 향상)
             gpu_optimizer: GPU 최적화 객체 (선택적)
         """
         self.config = config or Config()
@@ -41,8 +41,23 @@ class ObjectDetector:
         self.gpu_optimizer = gpu_optimizer
         self.logger = self._setup_logger()
         self.model = None
-        self.confidence_threshold = getattr(self.config, 'YOLO_CONFIDENCE_THRESHOLD', 0.25)
-        self.iou_threshold = getattr(self.config, 'YOLO_IOU_THRESHOLD', 0.45)
+        
+        # 향상된 임계값 설정 (정확도 95% 목표)
+        self.confidence_threshold = getattr(self.config, 'YOLO_CONFIDENCE_THRESHOLD', 0.35)  # 0.25 -> 0.35
+        self.iou_threshold = getattr(self.config, 'YOLO_IOU_THRESHOLD', 0.5)  # 0.45 -> 0.5
+        
+        # 성능 캐싱 시스템
+        self.detection_cache = {}
+        self.cache_max_size = 100
+        
+        # 제품 특화 클래스 매핑
+        self.product_classes = {
+            'cosmetics': ['bottle', 'tube', 'container', 'cup'],
+            'fashion': ['clothing', 'shirt', 'pants', 'dress', 'shoe'],
+            'accessories': ['bag', 'handbag', 'watch', 'jewelry'],
+            'electronics': ['cell phone', 'laptop', 'mouse', 'keyboard'],
+            'food': ['bottle', 'cup', 'bowl', 'spoon', 'fork']
+        }
         
         if self.gpu_optimizer:
             self.logger.info("객체 탐지 GPU 최적화 활성화됨")
@@ -52,10 +67,22 @@ class ObjectDetector:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        # 안전한 로그 레벨 설정
         try:
-            log_level = getattr(self.config, 'LOG_LEVEL', 'INFO')
-            if isinstance(log_level, str):
-                logger.setLevel(getattr(logging, log_level, logging.INFO))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
             else:
                 logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
@@ -72,7 +99,7 @@ class ObjectDetector:
         return logger
     
     def _load_model(self) -> None:
-        """YOLO 모델 로딩 (GPU 최적화)"""
+        """YOLO 모델 로딩 (최적화된 모델 선택 및 GPU 최적화)"""
         if YOLO is None:
             self.logger.warning("ultralytics 라이브러리가 설치되지 않았습니다. 객체 탐지 기능을 사용할 수 없습니다.")
             return
@@ -81,16 +108,24 @@ class ObjectDetector:
             start_time = time.time()
             self.logger.info(f"YOLO 모델 로드 시작: {self.model_name}")
             
-            # GPU 최적화된 모델 로딩
+            # 성능 최적화된 모델 로딩
             self.model = YOLO(self.model_name)
             
             # GPU 사용 가능할 때 모델을 GPU로 이동
             if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available:
                 self.model.to('cuda')
-                self.logger.info("YOLO 모델이 GPU로 이동되었습니다")
+                # GPU 최적화 설정
+                self.model.overrides['device'] = 'cuda'
+                self.model.overrides['half'] = True  # FP16 추론 활성화
+                self.logger.info("YOLO 모델이 GPU로 이동되었습니다 (FP16 최적화)")
             else:
                 self.model.to('cpu')
                 self.logger.info("YOLO 모델이 CPU에서 실행됩니다")
+            
+            # 모델 워밍업 (첫 추론 속도 향상)
+            if hasattr(self.model, 'warmup'):
+                self.model.warmup()
+                self.logger.debug("YOLO 모델 워밍업 완료")
             
             load_time = time.time() - start_time
             self.logger.info(f"YOLO 모델 로드 완료 - 소요시간: {load_time:.2f}초")
@@ -103,15 +138,17 @@ class ObjectDetector:
         self, 
         frame_image: Union[str, Path, Any],
         confidence_threshold: Optional[float] = None,
-        iou_threshold: Optional[float] = None
+        iou_threshold: Optional[float] = None,
+        enable_cache: bool = True
     ) -> Dict[str, Any]:
         """
-        단일 프레임에서 객체 탐지
+        단일 프레임에서 객체 탐지 (캐싱 및 성능 최적화)
         
         Args:
             frame_image: 입력 이미지 (파일 경로, PIL Image, numpy array 등)
             confidence_threshold: 신뢰도 임계값 (None이면 기본값 사용)
             iou_threshold: IoU 임계값 (None이면 기본값 사용)
+            enable_cache: 캐싱 활성화 여부
             
         Returns:
             탐지 결과 딕셔너리
@@ -125,14 +162,26 @@ class ObjectDetector:
             conf_thresh = confidence_threshold or self.confidence_threshold
             iou_thresh = iou_threshold or self.iou_threshold
             
+            # 캐시 키 생성
+            cache_key = None
+            if enable_cache and isinstance(frame_image, (str, Path)):
+                cache_key = f"{frame_image}_{conf_thresh}_{iou_thresh}"
+                if cache_key in self.detection_cache:
+                    self.logger.debug("캐시된 탐지 결과 반환")
+                    return self.detection_cache[cache_key]
+            
             start_time = time.time()
             
-            # YOLO 추론 실행
+            # YOLO 추론 실행 (최적화된 파라미터)
             results = self.model.predict(
                 source=frame_image,
                 conf=conf_thresh,
                 iou=iou_thresh,
-                verbose=False
+                verbose=False,
+                device='cuda' if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available else 'cpu',
+                half=True if self.gpu_optimizer and self.gpu_optimizer.is_gpu_available else False,
+                augment=False,  # TTA 비활성화로 속도 향상
+                agnostic_nms=True  # 클래스 무관 NMS
             )
             
             processing_time = time.time() - start_time
@@ -141,6 +190,13 @@ class ObjectDetector:
             if results and len(results) > 0:
                 result = results[0]
                 detection_result = self._parse_detection_result(result, processing_time)
+                
+                # 제품 특화 필터링 적용
+                detection_result = self._apply_product_filtering(detection_result)
+                
+                # 캐시 저장
+                if enable_cache and cache_key:
+                    self._update_cache(cache_key, detection_result)
                 
                 self.logger.debug(
                     f"객체 탐지 완료 - {len(detection_result['detections'])}개 객체 탐지, "
@@ -332,6 +388,52 @@ class ObjectDetector:
         except Exception:
             return []
     
+    def _apply_product_filtering(self, detection_result: Dict[str, Any]) -> Dict[str, Any]:
+        """제품 관련 객체에 대한 특화 필터링 적용"""
+        if not detection_result.get('success', False):
+            return detection_result
+        
+        # 제품 관련 클래스 우선순위 적용
+        product_related_classes = set()
+        for category_classes in self.product_classes.values():
+            product_related_classes.update(category_classes)
+        
+        enhanced_detections = []
+        for detection in detection_result['detections']:
+            class_name = detection['class_name']
+            
+            # 제품 관련 클래스는 신뢰도 가중치 적용
+            if class_name in product_related_classes:
+                detection['confidence'] = min(1.0, detection['confidence'] * 1.1)  # 10% 가중치
+                detection['is_product_related'] = True
+            else:
+                detection['is_product_related'] = False
+            
+            enhanced_detections.append(detection)
+        
+        # 제품 관련성과 신뢰도 순으로 정렬
+        enhanced_detections.sort(
+            key=lambda x: (x['is_product_related'], x['confidence']), 
+            reverse=True
+        )
+        
+        detection_result['detections'] = enhanced_detections
+        return detection_result
+    
+    def _update_cache(self, cache_key: str, result: Dict[str, Any]) -> None:
+        """캐시 업데이트 (LRU 방식)"""
+        if len(self.detection_cache) >= self.cache_max_size:
+            # 가장 오래된 항목 제거
+            oldest_key = next(iter(self.detection_cache))
+            del self.detection_cache[oldest_key]
+        
+        self.detection_cache[cache_key] = result
+    
+    def clear_cache(self) -> None:
+        """캐시 초기화"""
+        self.detection_cache.clear()
+        self.logger.debug("객체 탐지 캐시 초기화 완료")
+    
     def get_model_info(self) -> Dict[str, Any]:
         """모델 정보 반환"""
         return {
@@ -339,5 +441,8 @@ class ObjectDetector:
             'model_loaded': self.model is not None,
             'confidence_threshold': self.confidence_threshold,
             'iou_threshold': self.iou_threshold,
-            'available_classes': self.get_available_classes()
+            'available_classes': self.get_available_classes(),
+            'product_classes': self.product_classes,
+            'cache_size': len(self.detection_cache),
+            'gpu_optimized': self.gpu_optimizer is not None and self.gpu_optimizer.is_gpu_available
         }

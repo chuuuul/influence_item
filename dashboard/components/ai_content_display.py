@@ -7,10 +7,16 @@ import streamlit as st
 import json
 import re
 from datetime import datetime
-import pyperclip
 import os
 import uuid
 from typing import Dict, List, Any, Optional
+
+# Optional import for pyperclip - fallback if not available
+try:
+    import pyperclip
+    PYPERCLIP_AVAILABLE = True
+except ImportError:
+    PYPERCLIP_AVAILABLE = False
 
 def extract_ai_content_from_json_schema(candidate_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -154,10 +160,11 @@ def copy_to_clipboard_with_feedback(text: str, content_type: str = "텍스트") 
         """, unsafe_allow_html=True)
         
         # 백업: pyperclip 사용 (서버 사이드)
-        try:
-            pyperclip.copy(text)
-        except:
-            pass  # pyperclip 실패해도 JavaScript 버전이 있으므로 계속 진행
+        if PYPERCLIP_AVAILABLE:
+            try:
+                pyperclip.copy(text)
+            except:
+                pass  # pyperclip 실패해도 JavaScript 버전이 있으므로 계속 진행
         
         # 세션 스테이트에 복사 기록 저장
         if 'clipboard_history' not in st.session_state:
@@ -1022,14 +1029,17 @@ def generate_ai_content(product_data):
 
 def copy_to_clipboard(text, content_type="텍스트"):
     """클립보드에 텍스트 복사"""
-    try:
-        # pyperclip 사용 (크로스 플랫폼)
-        pyperclip.copy(text)
-        return True
-    except:
-        # pyperclip이 없거나 오류가 날 경우 세션 스테이트 사용
-        st.session_state.clipboard_content = text
-        return False
+    if PYPERCLIP_AVAILABLE:
+        try:
+            # pyperclip 사용 (크로스 플랫폼)
+            pyperclip.copy(text)
+            return True
+        except:
+            pass
+    
+    # pyperclip이 없거나 오류가 날 경우 세션 스테이트 사용
+    st.session_state.clipboard_content = text
+    return False
 
 def render_title_section(ai_content, product_data):
     """제목 섹션 렌더링"""

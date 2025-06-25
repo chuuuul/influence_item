@@ -38,36 +38,193 @@ from config.config import Config
 
 
 class GPUMemoryManager:
-    """GPU 메모리 관리 클래스"""
+    """GPU 메모리 관리 클래스 (메모리 누수 방지 강화)"""
     
     def __init__(self):
         self.allocated_tensors = []
         self.memory_lock = Lock()
+        self.memory_threshold = 0.85  # 85% 임계값
+        self.auto_cleanup_enabled = True
+        self.cleanup_interval = 10  # 10번의 할당마다 정리
+        self.allocation_count = 0
+        self.peak_memory_usage = 0
+        self.logger = logging.getLogger(__name__)
         
     def allocate_tensor(self, tensor: Any) -> None:
-        """텐서 할당 추적"""
+        """텐서 할당 추적 (자동 정리 포함)"""
         with self.memory_lock:
             self.allocated_tensors.append(tensor)
+            self.allocation_count += 1
+            
+            # 메모리 사용량 추적
+            if HAS_CUDA:
+                current_memory = torch.cuda.memory_allocated() / (1024**3)  # GB 단위
+                self.peak_memory_usage = max(self.peak_memory_usage, current_memory)
+                
+                # 임계값 초과 시 자동 정리
+                if self._check_memory_threshold():
+                    self.logger.warning(f"메모리 임계값 초과 ({self.memory_threshold*100:.1f}%) - 자동 정리 시작")
+                    self._emergency_cleanup()
+            
+            # 주기적 정리
+            if self.auto_cleanup_enabled and self.allocation_count % self.cleanup_interval == 0:
+                self._periodic_cleanup()
     
     def deallocate_tensor(self, tensor: Any) -> None:
-        """텐서 해제"""
+        """텐서 해제 (안전한 해제)"""
         with self.memory_lock:
             if tensor in self.allocated_tensors:
                 self.allocated_tensors.remove(tensor)
-                if HAS_CUDA and hasattr(tensor, 'cuda'):
-                    del tensor
+                
+                # 안전한 텐서 해제
+                self._safe_delete_tensor(tensor)
+    
+    def _safe_delete_tensor(self, tensor: Any) -> None:
+        """안전한 텐서 해제"""
+        try:
+            if HAS_CUDA and hasattr(tensor, 'cuda') and tensor.is_cuda:
+                # GPU 텐서 해제
+                tensor.detach_()
+                if hasattr(tensor, 'data'):
+                    tensor.data = None
+            
+            # 참조 해제
+            del tensor
+            
+        except Exception as e:
+            self.logger.warning(f"텐서 해제 중 오류: {e}")
+    
+    def _check_memory_threshold(self) -> bool:
+        """메모리 임계값 확인"""
+        if not HAS_CUDA:
+            return False
+        
+        try:
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated_memory = torch.cuda.memory_allocated(0)
+            utilization = allocated_memory / total_memory
+            
+            return utilization > self.memory_threshold
+            
+        except Exception:
+            return False
+    
+    def _emergency_cleanup(self) -> None:
+        """응급 메모리 정리"""
+        try:
+            # 오래된 텐서부터 해제 (FIFO)
+            tensors_to_remove = self.allocated_tensors[:len(self.allocated_tensors)//2]
+            
+            for tensor in tensors_to_remove:
+                if tensor in self.allocated_tensors:
+                    self.allocated_tensors.remove(tensor)
+                    self._safe_delete_tensor(tensor)
+            
+            # 강제 메모리 정리
+            if HAS_CUDA:
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            gc.collect()
+            
+            self.logger.info(f"응급 메모리 정리 완료 - {len(tensors_to_remove)}개 텐서 해제")
+            
+        except Exception as e:
+            self.logger.error(f"응급 메모리 정리 실패: {e}")
+    
+    def _periodic_cleanup(self) -> None:
+        """주기적 메모리 정리"""
+        try:
+            # 약한 참조로 변환된 텐서 정리
+            alive_tensors = []
+            for tensor in self.allocated_tensors:
+                try:
+                    # 텐서가 여전히 유효한지 확인
+                    if hasattr(tensor, 'data') and tensor.data is not None:
+                        alive_tensors.append(tensor)
+                    else:
+                        self._safe_delete_tensor(tensor)
+                except:
+                    # 무효한 텐서는 제거
+                    pass
+            
+            self.allocated_tensors = alive_tensors
+            
+            # 캐시된 메모리 정리
+            if HAS_CUDA:
+                torch.cuda.empty_cache()
+            
+            gc.collect()
+            
+        except Exception as e:
+            self.logger.debug(f"주기적 정리 중 오류: {e}")
     
     def clear_all(self) -> None:
-        """모든 텐서 해제"""
+        """모든 텐서 해제 (강화된 버전)"""
         with self.memory_lock:
+            # 모든 텐서 안전하게 해제
             for tensor in self.allocated_tensors:
-                if HAS_CUDA and hasattr(tensor, 'cuda'):
-                    del tensor
-            self.allocated_tensors.clear()
+                self._safe_delete_tensor(tensor)
             
+            self.allocated_tensors.clear()
+            self.allocation_count = 0
+            
+        # 강제 메모리 정리
         if HAS_CUDA:
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            # 추가 정리 시도
+            try:
+                torch.cuda.ipc_collect()
+            except:
+                pass
+        
+        # Python 메모리 정리
         gc.collect()
+        
+        self.logger.debug("모든 GPU 메모리 정리 완료")
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """메모리 통계 반환"""
+        stats = {
+            'allocated_tensors': len(self.allocated_tensors),
+            'allocation_count': self.allocation_count,
+            'peak_memory_usage_gb': self.peak_memory_usage,
+            'memory_threshold': self.memory_threshold,
+            'auto_cleanup_enabled': self.auto_cleanup_enabled
+        }
+        
+        if HAS_CUDA:
+            try:
+                stats.update({
+                    'current_allocated_gb': torch.cuda.memory_allocated() / (1024**3),
+                    'current_cached_gb': torch.cuda.memory_reserved() / (1024**3),
+                    'max_allocated_gb': torch.cuda.max_memory_allocated() / (1024**3),
+                    'max_cached_gb': torch.cuda.max_memory_reserved() / (1024**3)
+                })
+            except:
+                pass
+        
+        return stats
+    
+    def set_memory_threshold(self, threshold: float) -> None:
+        """메모리 임계값 설정"""
+        if 0.5 <= threshold <= 0.95:
+            self.memory_threshold = threshold
+            self.logger.info(f"메모리 임계값 설정: {threshold*100:.1f}%")
+        else:
+            self.logger.warning(f"유효하지 않은 임계값: {threshold}")
+    
+    def enable_auto_cleanup(self, enabled: bool = True) -> None:
+        """자동 정리 활성화/비활성화"""
+        self.auto_cleanup_enabled = enabled
+        self.logger.info(f"자동 메모리 정리: {'활성화' if enabled else '비활성화'}")
+    
+    def force_cleanup(self) -> None:
+        """강제 메모리 정리"""
+        self.logger.info("강제 메모리 정리 시작")
+        self._emergency_cleanup()
 
 
 class GPUBatchProcessor:
@@ -155,10 +312,27 @@ class GPUOptimizer:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        
+        # 안전한 로그 레벨 설정
         try:
-            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
-            logger.setLevel(logging.INFO)  # 기본값 사용
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -323,26 +497,125 @@ class GPUOptimizer:
         return optimal_size
     
     @contextmanager
-    def gpu_memory_context(self, device_id: int = 0):
-        """GPU 메모리 관리 컨텍스트 매니저"""
+    def gpu_memory_context(self, device_id: int = 0, strict_cleanup: bool = True):
+        """GPU 메모리 관리 컨텍스트 매니저 (강화된 버전)"""
         initial_memory = None
+        initial_cached = None
+        memory_peak = 0
         
         try:
             if self.has_cuda:
                 initial_memory = torch.cuda.memory_allocated(device_id)
+                initial_cached = torch.cuda.memory_reserved(device_id)
+                memory_peak = initial_memory
+                
+                # 메모리 모니터링 설정
+                self._setup_memory_monitoring(device_id)
                 
             yield
             
+        except Exception as e:
+            self.logger.error(f"GPU 메모리 컨텍스트에서 오류 발생: {e}")
+            # 오류 시 강제 정리
+            if self.has_cuda and strict_cleanup:
+                self._emergency_memory_cleanup(device_id)
+            raise
+            
         finally:
             if self.has_cuda:
-                current_memory = torch.cuda.memory_allocated(device_id)
-                if initial_memory is not None:
-                    memory_diff = current_memory - initial_memory
-                    if memory_diff > 0:
-                        self.logger.debug(f"메모리 사용량 증가: {memory_diff:,} bytes")
+                try:
+                    current_memory = torch.cuda.memory_allocated(device_id)
+                    current_cached = torch.cuda.memory_reserved(device_id)
+                    
+                    if initial_memory is not None:
+                        memory_diff = current_memory - initial_memory
+                        cached_diff = current_cached - initial_cached
+                        
+                        # 메모리 사용량 로깅
+                        if memory_diff > 0:
+                            self.logger.debug(f"메모리 사용량 증가: {memory_diff:,} bytes (캐시: {cached_diff:,} bytes)")
+                        
+                        # 메모리 누수 감지
+                        if memory_diff > 100 * 1024 * 1024:  # 100MB 이상 증가
+                            self.logger.warning(f"메모리 누수 가능성 감지: {memory_diff:,} bytes 증가")
+                            if strict_cleanup:
+                                self._emergency_memory_cleanup(device_id)
+                    
+                    # 컨텍스트 종료 시 메모리 정리
+                    if strict_cleanup:
+                        self.clear_gpu_memory()
+                    else:
+                        # 최소한의 정리만 수행
+                        self._light_memory_cleanup(device_id)
+                        
+                except Exception as cleanup_error:
+                    self.logger.error(f"메모리 정리 중 오류: {cleanup_error}")
+    
+    def _setup_memory_monitoring(self, device_id: int = 0):
+        """메모리 모니터링 설정"""
+        try:
+            if self.has_cuda:
+                torch.cuda.reset_peak_memory_stats(device_id)
+        except Exception as e:
+            self.logger.debug(f"메모리 모니터링 설정 실패: {e}")
+    
+    def _emergency_memory_cleanup(self, device_id: int = 0):
+        """응급 GPU 메모리 정리"""
+        try:
+            self.logger.warning(f"GPU {device_id} 응급 메모리 정리 시작")
+            
+            # 1. 관리되는 텐서 해제
+            self.memory_manager.force_cleanup()
+            
+            # 2. PyTorch 캐시 정리
+            if self.has_cuda:
+                with torch.cuda.device(device_id):
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    
+                    # 3. 추가 정리 시도
+                    try:
+                        torch.cuda.ipc_collect()
+                    except:
+                        pass
+            
+            # 4. Python 가비지 컬렉션
+            gc.collect()
+            
+            # 5. 메모리 상태 확인
+            if self.has_cuda:
+                after_cleanup = torch.cuda.memory_allocated(device_id)
+                self.logger.info(f"응급 정리 후 메모리: {after_cleanup:,} bytes")
+            
+        except Exception as e:
+            self.logger.error(f"응급 메모리 정리 실패: {e}")
+    
+    def _light_memory_cleanup(self, device_id: int = 0):
+        """가벼운 메모리 정리"""
+        try:
+            if self.has_cuda:
+                torch.cuda.empty_cache()
+            gc.collect()
+        except Exception as e:
+            self.logger.debug(f"가벼운 메모리 정리 실패: {e}")
+    
+    @contextmanager
+    def optimized_context(self, memory_threshold: float = 0.8):
+        """최적화된 GPU 컨텍스트 매니저"""
+        try:
+            # 메모리 임계값 설정
+            old_threshold = self.memory_manager.memory_threshold
+            self.memory_manager.set_memory_threshold(memory_threshold)
+            
+            # 자동 정리 활성화
+            self.memory_manager.enable_auto_cleanup(True)
+            
+            with self.gpu_memory_context(strict_cleanup=True):
+                yield
                 
-                # 메모리 정리
-                self.clear_gpu_memory()
+        finally:
+            # 원래 설정 복원
+            self.memory_manager.set_memory_threshold(old_threshold)
     
     def clear_gpu_memory(self) -> None:
         """GPU 메모리 정리"""

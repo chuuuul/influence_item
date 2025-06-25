@@ -1,0 +1,56 @@
+{
+  "monitoring": {
+    "check_interval": 30,
+    "timeout": 10,
+    "max_failures": 3,
+    "recovery_timeout": 300
+  },
+  "services": {
+    "dashboard": {
+      "url": "http://localhost:8501",
+      "critical": true,
+      "failover_strategy": "IMMEDIATE",
+      "backup_urls": [
+        "http://localhost:8502",
+        "http://localhost:8503"
+      ]
+    },
+    "api_server": {
+      "url": "http://localhost:8000",
+      "critical": true,
+      "failover_strategy": "IMMEDIATE",
+      "backup_urls": [
+        "http://localhost:8001",
+        "http://localhost:8002"
+      ]
+    },
+    "database": {
+      "path": "influence_item.db",
+      "critical": true,
+      "failover_strategy": "IMMEDIATE",
+      "backup_paths": [
+        "backups/db_primary.db",
+        "backups/db_secondary.db"
+      ]
+    },
+    "n8n": {
+      "url": "http://localhost:5678",
+      "critical": false,
+      "failover_strategy": "GRADUAL",
+      "backup_urls": [
+        "http://localhost:5679"
+      ]
+    }
+  },
+  "alerting": {
+    "slack_webhook": "",
+    "email_alerts": true,
+    "sms_alerts": false
+  },
+  "backup": {
+    "enabled": true,
+    "interval": 3600,
+    "retention_days": 30,
+    "remote_backup": true
+  }
+}

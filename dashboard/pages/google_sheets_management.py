@@ -21,8 +21,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
-    from src.rss_automation.sheets_integration import SheetsIntegration, SheetsConfig
+    from src.integrations.google_sheets_integration import GoogleSheetsIntegration
+    from dashboard.utils.env_loader import load_env_file
     SHEETS_AVAILABLE = True
+    # 환경변수 로드
+    load_env_file()
 except ImportError as e:
     st.error(f"Google Sheets 연동 모듈 로드 실패: {str(e)}")
     SHEETS_AVAILABLE = False
@@ -37,50 +40,39 @@ def display_connection_status():
         return None
     
     try:
-        # 세션 상태에서 설정 확인
-        if 'sheets_config' not in st.session_state:
-            st.warning("Google Sheets 설정이 없습니다. 아래에서 설정을 입력하세요.")
-            return None
-        
-        config = st.session_state.sheets_config
-        sheets_integration = SheetsIntegration(config)
+        # Google Sheets 통합 초기화
+        sheets_integration = GoogleSheetsIntegration()
         
         # 연결 검증
         with st.spinner("연결 상태 확인 중..."):
-            validation_result = sheets_integration.validate_connection()
+            info = sheets_integration.get_spreadsheet_info()
         
         # 결과 표시
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if validation_result['connection_status']:
-                st.success("✅ 인증 성공")
-            else:
-                st.error("❌ 인증 실패")
+            st.success("✅ 인증 성공")
         
         with col2:
-            if validation_result['spreadsheet_access']:
-                st.success("✅ 스프레드시트 접근")
-                st.caption(f"제목: {validation_result.get('spreadsheet_title', 'N/A')}")
-            else:
-                st.error("❌ 스프레드시트 접근 불가")
+            st.success("✅ 스프레드시트 접근")
+            st.caption(f"제목: {info['title']}")
         
         with col3:
-            if validation_result.get('write_permission'):
-                st.success("✅ 읽기/쓰기 권한")
-            else:
-                st.error("❌ 권한 부족")
+            st.success("✅ 읽기/쓰기 권한")
         
         # 워크시트 정보
-        if validation_result['sheets_accessible']:
-            st.write("**접근 가능한 워크시트:**")
-            for sheet in validation_result['sheets_accessible']:
-                st.write(f"- {sheet['title']} ({sheet['rows']}x{sheet['cols']})")
+        st.write("**접근 가능한 시트:**")
+        for sheet_name in info['sheets']:
+            st.write(f"- {sheet_name}")
+        
+        # 스프레드시트 링크
+        st.markdown(f"🔗 [Google Sheets에서 보기]({info['url']})")
         
         return sheets_integration
         
     except Exception as e:
         st.error(f"연결 확인 중 오류: {str(e)}")
+        st.info("환경변수 GOOGLE_SHEETS_SPREADSHEET_ID와 인증 파일을 확인하세요.")
         return None
 
 

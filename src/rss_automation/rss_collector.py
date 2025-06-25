@@ -212,6 +212,59 @@ class RSSCollector:
             self.logger.error(f"중복 확인 실패: {str(e)}")
             return False
     
+    def parse_rss_feed(self, rss_url: str) -> List[Dict[str, Any]]:
+        """
+        RSS 피드 파싱 (public 메서드)
+        
+        Args:
+            rss_url: RSS 피드 URL
+            
+        Returns:
+            파싱된 비디오 정보 리스트
+        """
+        try:
+            self.logger.info(f"RSS 피드 파싱 시작: {rss_url}")
+            
+            # RSS 피드 파싱
+            feed = feedparser.parse(rss_url)
+            
+            if feed.bozo:
+                self.logger.warning(f"RSS 피드 파싱 경고: {rss_url} - {feed.bozo_exception}")
+            
+            videos = []
+            for entry in feed.entries:
+                try:
+                    video_id = self._extract_video_id_from_url(entry.link)
+                    if not video_id:
+                        continue
+                    
+                    # 게시 날짜 파싱
+                    published_date = None
+                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                        published_date = datetime(*entry.published_parsed[:6])
+                    
+                    video_data = {
+                        'video_id': video_id,
+                        'title': entry.title,
+                        'url': entry.link,
+                        'published_date': published_date,
+                        'description': getattr(entry, 'summary', ''),
+                        'thumbnail_url': self._extract_thumbnail_url(entry)
+                    }
+                    
+                    videos.append(video_data)
+                    
+                except Exception as e:
+                    self.logger.error(f"RSS 엔트리 처리 실패: {str(e)}")
+                    continue
+            
+            self.logger.info(f"RSS 피드 파싱 완료: {len(videos)}개 비디오")
+            return videos
+            
+        except Exception as e:
+            self.logger.error(f"RSS 피드 파싱 실패: {str(e)}")
+            return []
+
     def _collect_from_rss_feed(self, channel: ChannelInfo) -> List[Dict[str, Any]]:
         """RSS 피드에서 비디오 수집"""
         collected_videos = []

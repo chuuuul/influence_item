@@ -1,0 +1,20 @@
+# .dockerignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.git/
+.gitignore
+README.md
+.env
+.venv/
+venv/
+node_modules/
+*.log
+.DS_Store
+*.backup
+test_env/
+screenshot/
+*.pid
+.env.backup.*

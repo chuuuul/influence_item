@@ -332,10 +332,27 @@ class TargetFrameExtractor:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        
+        # 안전한 로그 레벨 설정
         try:
-            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
-            logger.setLevel(logging.INFO)  # 기본값 사용
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -550,10 +567,11 @@ class TargetFrameExtractor:
             
             if frame.frame_data is not None:
                 try:
-                    ocr_result = self.ocr_processor.process_image(frame.frame_data)
-                    if ocr_result and 'texts' in ocr_result:
-                        ocr_results = ocr_result['raw_results']
-                        detected_texts = ocr_result['texts']
+                    # OCR 처리 메서드 수정
+                    ocr_text_results = self.ocr_processor.extract_text_from_frame(frame.frame_data)
+                    if ocr_text_results:
+                        ocr_results = ocr_text_results
+                        detected_texts = [result['text'] for result in ocr_text_results if result.get('text')]
                 except Exception as e:
                     self.logger.warning(f"OCR 처리 실패 (프레임 {frame.frame_index}): {e}")
             
@@ -564,9 +582,9 @@ class TargetFrameExtractor:
             if frame.frame_data is not None:
                 try:
                     detection_result = self.object_detector.detect_objects(frame.frame_data)
-                    if detection_result and 'detections' in detection_result:
+                    if detection_result and detection_result.get('success') and detection_result.get('detections'):
                         object_detection_results = detection_result['detections']
-                        detected_objects = [d.get('class', 'unknown') for d in detection_result['detections']]
+                        detected_objects = [d.get('class_name', 'unknown') for d in detection_result['detections']]
                 except Exception as e:
                     self.logger.warning(f"객체 인식 실패 (프레임 {frame.frame_index}): {e}")
             

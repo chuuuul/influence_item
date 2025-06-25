@@ -47,7 +47,19 @@ class ImagePreprocessor:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(getattr(logging, self.config.LOG_LEVEL, 'INFO'))
+        
+        # 안전한 로그 레벨 설정
+        try:
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+                    logger.setLevel(getattr(logging, level_str))
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()

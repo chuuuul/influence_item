@@ -9,12 +9,15 @@ import json
 import logging
 import tempfile
 import time
+import gc
+import psutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import traceback
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.config import Config
 from ..whisper_processor.whisper_processor import WhisperProcessor
@@ -31,6 +34,7 @@ from ..schema.models import ProductRecommendationCandidate, SourceInfo, Candidat
 from ..schema.formatters import APIResponseFormatter
 from ..youtube_api.youtube_client import YouTubeAPIClient
 from ..youtube_api.quota_manager import QuotaManager
+from ..error_handling.graceful_degradation import GracefulDegradationHandler, get_degradation_handler, with_graceful_degradation
 
 
 class PipelineStatus(Enum):
@@ -57,7 +61,7 @@ class PipelineResult:
 
 
 class AIAnalysisPipeline:
-    """AI 분석 파이프라인 오케스트레이터"""
+    """AI 분석 파이프라인 오케스트레이터 (최적화된 버전)"""
     
     def __init__(self, config: Optional[Config] = None):
         """
@@ -69,26 +73,36 @@ class AIAnalysisPipeline:
         self.config = config or Config()
         self.logger = self._setup_logger()
         
-        # 모듈 초기화
-        self.youtube_downloader = YouTubeDownloader(config)
-        self.whisper_processor = WhisperProcessor(config)
-        self.first_pass_analyzer = GeminiFirstPassAnalyzer(config)
-        self.second_pass_analyzer = GeminiSecondPassAnalyzer(config)
-        self.target_frame_extractor = TargetFrameExtractor(config)
-        self.state_manager = StateManager(config)
-        self.monetization_service = MonetizationService()
-        self.score_calculator = ScoreCalculator()
+        # 성능 모니터링 초기화
+        self.process = psutil.Process()
+        self.performance_metrics = {
+            'memory_peak': 0,
+            'cpu_peak': 0,
+            'step_times': {},
+            'bottlenecks': []
+        }
+        
+        # Thread Pool Executor 초기화 (CPU 집약적 작업용)
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=min(4, psutil.cpu_count()),
+            thread_name_prefix="pipeline_worker"
+        )
+        
+        # Graceful Degradation 핸들러 초기화
+        self.degradation_handler = get_degradation_handler(config)
+        
+        # 모듈 초기화 (에러 처리 강화)
+        self.youtube_downloader = self._init_youtube_downloader(config)
+        self.whisper_processor = self._init_whisper_processor(config)
+        self.first_pass_analyzer = self._init_first_pass_analyzer(config)
+        self.second_pass_analyzer = self._init_second_pass_analyzer(config)
+        self.target_frame_extractor = self._init_target_frame_extractor(config)
+        self.state_manager = self._init_state_manager(config)
+        self.monetization_service = self._init_monetization_service()
+        self.score_calculator = self._init_score_calculator()
         
         # YouTube API 클라이언트 초기화
-        try:
-            self.youtube_api_client = YouTubeAPIClient(
-                api_key=config.YOUTUBE_API_KEY,
-                quota_manager=QuotaManager(daily_limit=config.YOUTUBE_API_DAILY_QUOTA)
-            )
-            self.logger.info("YouTube API 클라이언트 초기화 완료")
-        except Exception as e:
-            self.logger.warning(f"YouTube API 클라이언트 초기화 실패 (기본값 사용): {str(e)}")
-            self.youtube_api_client = None
+        self.youtube_api_client = self._init_youtube_api_client(config)
         
         # 상태 관리
         self.current_status = PipelineStatus.PENDING
@@ -97,10 +111,27 @@ class AIAnalysisPipeline:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        
+        # 안전한 로그 레벨 설정
         try:
-            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
-            logger.setLevel(logging.INFO)  # 기본값 사용
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -112,9 +143,157 @@ class AIAnalysisPipeline:
             
         return logger
     
+    def _init_youtube_downloader(self, config: Config) -> YouTubeDownloader:
+        """YouTube 다운로더 초기화"""
+        try:
+            downloader = YouTubeDownloader(config)
+            self.degradation_handler.register_service('youtube_downloader')
+            self.logger.info("YouTube 다운로더 초기화 완료")
+            return downloader
+        except Exception as e:
+            self.degradation_handler.record_service_error('youtube_downloader', str(e))
+            self.logger.error(f"YouTube 다운로더 초기화 실패: {e}")
+            raise
+    
+    def _init_whisper_processor(self, config: Config) -> WhisperProcessor:
+        """Whisper 프로세서 초기화"""
+        try:
+            processor = WhisperProcessor(config)
+            self.degradation_handler.register_service('whisper')
+            self.logger.info("Whisper 프로세서 초기화 완료")
+            return processor
+        except Exception as e:
+            self.degradation_handler.record_service_error('whisper', str(e))
+            self.logger.warning(f"Whisper 프로세서 초기화 실패: {e}")
+            # Whisper는 대체 가능하므로 None 반환
+            return None
+    
+    def _init_first_pass_analyzer(self, config: Config) -> GeminiFirstPassAnalyzer:
+        """Gemini 1차 분석기 초기화"""
+        try:
+            analyzer = GeminiFirstPassAnalyzer(config)
+            self.degradation_handler.register_service('gemini_api')
+            self.logger.info("Gemini 1차 분석기 초기화 완료")
+            return analyzer
+        except Exception as e:
+            self.degradation_handler.record_service_error('gemini_api', str(e))
+            self.logger.error(f"Gemini 1차 분석기 초기화 실패: {e}")
+            raise
+    
+    def _init_second_pass_analyzer(self, config: Config) -> GeminiSecondPassAnalyzer:
+        """Gemini 2차 분석기 초기화"""
+        try:
+            analyzer = GeminiSecondPassAnalyzer(config)
+            self.logger.info("Gemini 2차 분석기 초기화 완료")
+            return analyzer
+        except Exception as e:
+            self.degradation_handler.record_service_error('gemini_api', str(e))
+            self.logger.error(f"Gemini 2차 분석기 초기화 실패: {e}")
+            raise
+    
+    def _init_target_frame_extractor(self, config: Config) -> TargetFrameExtractor:
+        """타겟 프레임 추출기 초기화"""
+        try:
+            extractor = TargetFrameExtractor(config)
+            self.degradation_handler.register_service('visual_analysis')
+            self.logger.info("타겟 프레임 추출기 초기화 완료")
+            return extractor
+        except Exception as e:
+            self.degradation_handler.record_service_error('visual_analysis', str(e))
+            self.logger.warning(f"타겟 프레임 추출기 초기화 실패: {e}")
+            # 시각 분석은 선택적이므로 None 반환
+            return None
+    
+    def _init_state_manager(self, config: Config) -> StateManager:
+        """상태 관리자 초기화"""
+        try:
+            manager = StateManager(config)
+            self.logger.info("상태 관리자 초기화 완료")
+            return manager
+        except Exception as e:
+            self.logger.warning(f"상태 관리자 초기화 실패: {e}")
+            # 상태 관리는 선택적이므로 None 반환
+            return None
+    
+    def _init_monetization_service(self) -> MonetizationService:
+        """수익화 서비스 초기화"""
+        try:
+            service = MonetizationService()
+            self.degradation_handler.register_service('monetization')
+            self.logger.info("수익화 서비스 초기화 완료")
+            return service
+        except Exception as e:
+            self.degradation_handler.record_service_error('monetization', str(e))
+            self.logger.warning(f"수익화 서비스 초기화 실패: {e}")
+            # 수익화는 선택적이므로 None 반환
+            return None
+    
+    def _init_score_calculator(self) -> ScoreCalculator:
+        """점수 계산기 초기화"""
+        try:
+            calculator = ScoreCalculator()
+            self.logger.info("점수 계산기 초기화 완료")
+            return calculator
+        except Exception as e:
+            self.logger.warning(f"점수 계산기 초기화 실패: {e}")
+            # 점수 계산은 선택적이므로 None 반환
+            return None
+    
+    def _init_youtube_api_client(self, config: Config) -> Optional[YouTubeAPIClient]:
+        """YouTube API 클라이언트 초기화"""
+        try:
+            client = YouTubeAPIClient(
+                api_key=config.YOUTUBE_API_KEY,
+                quota_manager=QuotaManager(daily_limit=config.YOUTUBE_API_DAILY_QUOTA)
+            )
+            self.degradation_handler.register_service('youtube_api')
+            self.logger.info("YouTube API 클라이언트 초기화 완료")
+            return client
+        except Exception as e:
+            self.degradation_handler.record_service_error('youtube_api', str(e))
+            self.logger.warning(f"YouTube API 클라이언트 초기화 실패 (폴백 모드): {str(e)}")
+            return None
+    
+    def _monitor_performance(self, step_name: str):
+        """성능 모니터링"""
+        try:
+            # 메모리 사용량 체크
+            memory_info = self.process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            
+            # CPU 사용률 체크
+            cpu_percent = self.process.cpu_percent()
+            
+            # 최고점 기록
+            self.performance_metrics['memory_peak'] = max(
+                self.performance_metrics['memory_peak'], memory_mb
+            )
+            self.performance_metrics['cpu_peak'] = max(
+                self.performance_metrics['cpu_peak'], cpu_percent
+            )
+            
+            # 메모리 사용량이 과도한 경우 경고
+            if memory_mb > 2048:  # 2GB 이상
+                self.logger.warning(f"[{step_name}] 높은 메모리 사용량: {memory_mb:.1f}MB")
+                self.performance_metrics['bottlenecks'].append({
+                    'step': step_name,
+                    'type': 'high_memory',
+                    'value': memory_mb,
+                    'timestamp': time.time()
+                })
+                
+                # 강제 가비지 컬렉션
+                gc.collect()
+                
+        except Exception as e:
+            self.logger.debug(f"성능 모니터링 실패: {str(e)}")
+
     def _log_step(self, step_name: str, status: str, message: str, 
                   execution_time: Optional[float] = None, **extra_data):
-        """파이프라인 단계 로그 기록"""
+        """파이프라인 단계 로그 기록 (성능 모니터링 포함)"""
+        # 성능 모니터링
+        self._monitor_performance(step_name)
+        
         log_entry = {
             'step': step_name,
             'status': status,
@@ -123,6 +302,19 @@ class AIAnalysisPipeline:
             'execution_time': execution_time,
             **extra_data
         }
+        
+        # 실행 시간 기록
+        if execution_time and step_name not in ['pipeline']:
+            self.performance_metrics['step_times'][step_name] = execution_time
+            
+            # 느린 단계 감지 (30초 이상)
+            if execution_time > 30:
+                self.performance_metrics['bottlenecks'].append({
+                    'step': step_name,
+                    'type': 'slow_execution',
+                    'value': execution_time,
+                    'timestamp': time.time()
+                })
         
         self.step_logs.append(log_entry)
         
@@ -188,25 +380,31 @@ class AIAnalysisPipeline:
                                                {"final_results": final_results}, 
                                                ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass"])
             
-            # 7단계: 수익화 검증 (쿠팡 파트너스 API)
+            # 7단계: PPL 콘텐츠 필터링
+            final_results, filtered_ppl_results = await self._step_ppl_filtering(final_results)
+            self.state_manager.create_checkpoint(video_url, "ppl_filtering_complete", 
+                                               {"final_results": final_results, "filtered_ppl_results": filtered_ppl_results}, 
+                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "ppl_filtering"])
+            
+            # 8단계: 수익화 검증 (쿠팡 파트너스 API)
             final_results = await self._step_monetization_verification(final_results)
             self.state_manager.create_checkpoint(video_url, "monetization_complete", 
                                                {"final_results": final_results}, 
-                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "monetization"])
+                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "ppl_filtering", "monetization"])
             
-            # 8단계: 매력도 스코어링
+            # 9단계: 매력도 스코어링
             final_results = await self._step_attractiveness_scoring(final_results, script_data, video_url)
             self.state_manager.create_checkpoint(video_url, "scoring_complete", 
                                                {"final_results": final_results}, 
-                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "monetization", "scoring"])
+                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "ppl_filtering", "monetization", "scoring"])
             
-            # 9단계: 최종 JSON 스키마 매핑
+            # 10단계: 최종 JSON 스키마 매핑
             final_results = await self._step_final_schema_mapping(final_results, video_url)
             self.state_manager.create_checkpoint(video_url, "schema_mapping_complete", 
                                                {"final_results": final_results}, 
-                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "monetization", "scoring", "schema_mapping"])
+                                               ["initialization", "download", "transcription", "first_pass", "visual_analysis", "second_pass", "ppl_filtering", "monetization", "scoring", "schema_mapping"])
             
-            # 10단계: 후처리 및 정리
+            # 11단계: 후처리 및 정리
             await self._step_finalization(audio_path, video_path)
             
             # 파이프라인 성공 완료
@@ -298,11 +496,21 @@ class AIAnalysisPipeline:
             self._log_step("download", "error", f"다운로드 실패: {str(e)}", step_time)
             raise
     
+    @with_graceful_degradation('whisper', fallback_func=lambda self, audio_path: self.degradation_handler.get_fallback_transcription_result())
     async def _step_transcribe_audio(self, audio_path: Path) -> List[Dict[str, Any]]:
-        """3단계: Whisper 음성 인식"""
+        """3단계: Whisper 음성 인식 (Graceful Degradation 적용)"""
         step_start = time.time()
         
         try:
+            # Whisper 프로세서가 없는 경우 폴백
+            if self.whisper_processor is None:
+                self.logger.warning("Whisper 프로세서가 없음 - 폴백 결과 사용")
+                fallback_result = self.degradation_handler.get_fallback_transcription_result()
+                step_time = time.time() - step_start
+                self._log_step("transcription", "fallback", 
+                              f"음성 인식 폴백 - {len(fallback_result)}개 세그먼트", step_time)
+                return fallback_result
+            
             self.logger.info("Whisper 음성 인식 시작")
             
             # 음성 인식 실행 
@@ -314,6 +522,9 @@ class AIAnalysisPipeline:
             # JSON 형태로 포맷팅
             script_data = self.whisper_processor.format_segments_to_json(segments)
             
+            # 성공 기록
+            self.degradation_handler.record_service_success('whisper')
+            
             step_time = time.time() - step_start
             self._log_step("transcription", "success", 
                           f"음성 인식 완료 - {len(script_data)}개 세그먼트", step_time)
@@ -321,6 +532,7 @@ class AIAnalysisPipeline:
             return script_data
             
         except Exception as e:
+            self.degradation_handler.record_service_error('whisper', str(e))
             step_time = time.time() - step_start
             self._log_step("transcription", "error", f"음성 인식 실패: {str(e)}", step_time)
             raise
@@ -422,48 +634,57 @@ class AIAnalysisPipeline:
         visual_analysis_results: List[Dict[str, Any]],
         video_url: str
     ) -> List[Dict[str, Any]]:
-        """5단계: Gemini 2차 분석 (상세 정보 추출)"""
+        """5단계: Gemini 2차 분석 (시각 분석 결과 통합) - 병렬 처리 최적화"""
         step_start = time.time()
         
         try:
-            self.logger.info("Gemini 2차 분석 시작")
+            self.logger.info("Gemini 2차 분석 시작 (병렬 처리 적용)")
             
             if not candidates:
                 self.logger.warning("1차 분석에서 후보 구간이 발견되지 않았습니다")
                 return []
             
-            final_results = []
+            # 병렬 처리를 위한 작업 준비
+            analysis_tasks = []
             
             for i, candidate in enumerate(candidates):
-                try:
-                    self.logger.info(f"후보 구간 {i+1}/{len(candidates)} 상세 분석 중")
-                    
-                    # 해당 구간의 스크립트 추출
-                    segment_data = self._extract_segment_data(candidate, script_data)
-                    
-                    # 영상 소스 정보 구성
-                    source_info = {
-                        'video_url': video_url,
-                        'segment_data': segment_data
-                    }
-                    
-                    # 재시도 로직으로 2차 분석 실행
-                    detailed_info = await self._retry_with_backoff(
-                        self.second_pass_analyzer.extract_product_info,
-                        candidate, source_info,
-                        max_retries=2
-                    )
-                    
-                    if detailed_info:
-                        final_results.append(detailed_info)
-                        
-                except Exception as e:
-                    self.logger.warning(f"후보 구간 {i+1} 분석 실패: {str(e)}")
-                    continue
+                # 각 후보에 대한 분석 작업 준비
+                segment_data = self._extract_segment_data(candidate, script_data)
+                visual_data = self._match_visual_analysis_results(candidate, visual_analysis_results)
+                
+                source_info = {
+                    'video_url': video_url,
+                    'segment_data': segment_data,
+                    'visual_analysis': visual_data
+                }
+                
+                # 비동기 작업 생성
+                task = self._analyze_candidate_parallel(i, candidate, source_info, visual_data)
+                analysis_tasks.append(task)
+            
+            # 병렬 실행 (최대 3개 동시 처리)
+            final_results = []
+            batch_size = min(3, len(analysis_tasks))  # API 제한 고려
+            
+            for i in range(0, len(analysis_tasks), batch_size):
+                batch = analysis_tasks[i:i+batch_size]
+                batch_results = await asyncio.gather(*batch, return_exceptions=True)
+                
+                # 결과 처리
+                for result in batch_results:
+                    if isinstance(result, Exception):
+                        self.logger.warning(f"병렬 분석 작업 실패: {str(result)}")
+                        continue
+                    if result:
+                        final_results.append(result)
+                
+                # 배치 간 간격 (API 제한 고려)
+                if i + batch_size < len(analysis_tasks):
+                    await asyncio.sleep(1)
             
             step_time = time.time() - step_start
             self._log_step("second_pass", "success", 
-                          f"2차 분석 완료 - {len(final_results)}개 제품 정보 추출", step_time)
+                          f"2차 분석 완료 (병렬 처리) - {len(final_results)}개 제품 정보 추출", step_time)
             
             return final_results
             
@@ -472,8 +693,113 @@ class AIAnalysisPipeline:
             self._log_step("second_pass", "error", f"2차 분석 실패: {str(e)}", step_time)
             raise
     
+    async def _analyze_candidate_parallel(
+        self, 
+        index: int, 
+        candidate: Dict[str, Any], 
+        source_info: Dict[str, Any], 
+        visual_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """개별 후보에 대한 병렬 분석"""
+        try:
+            self.logger.debug(f"후보 구간 {index+1} 병렬 분석 시작")
+            
+            # 재시도 로직으로 2차 분석 실행
+            detailed_info = await self._retry_with_backoff(
+                self.second_pass_analyzer.extract_product_info,
+                candidate, source_info,
+                max_retries=2
+            )
+            
+            if detailed_info:
+                # 시각 분석 결과 통합
+                detailed_info = self._integrate_visual_analysis_to_result(detailed_info, visual_data)
+                return detailed_info
+                
+        except Exception as e:
+            self.logger.warning(f"후보 구간 {index+1} 병렬 분석 실패: {str(e)}")
+            return None
+    
+    async def _step_ppl_filtering(self, analysis_results: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """7단계: PPL 콘텐츠 필터링 (PRD 3.1 요구사항)"""
+        step_start = time.time()
+        
+        try:
+            self.logger.info("PPL 콘텐츠 필터링 시작")
+            
+            passed_results = []
+            filtered_ppl_results = []
+            
+            ppl_threshold = self.config.PPL_FILTER_THRESHOLD
+            
+            for result in analysis_results:
+                try:
+                    # status_info에서 PPL 확률 추출
+                    status_info = result.get('status_info', {})
+                    ppl_confidence = status_info.get('ppl_confidence', 0.0)
+                    
+                    # PPL 확률이 임계값을 초과하는지 확인
+                    if ppl_confidence >= ppl_threshold:
+                        # PPL 필터링 상태로 분류
+                        result['status_info']['current_status'] = 'filtered_ppl'
+                        result['status_info']['is_ppl'] = True
+                        filtered_ppl_results.append(result)
+                        
+                        # 제품명 추출
+                        product_name = result.get('candidate_info', {}).get('product_name_ai', 'Unknown')
+                        self.logger.info(f"제품 '{product_name}' PPL 필터링됨 - 확률: {ppl_confidence:.3f}")
+                        
+                    else:
+                        # 필터링 통과
+                        result['status_info']['is_ppl'] = False
+                        if result['status_info']['current_status'] == 'analysis_complete':
+                            result['status_info']['current_status'] = 'needs_review'
+                        passed_results.append(result)
+                        
+                        # 제품명 추출
+                        product_name = result.get('candidate_info', {}).get('product_name_ai', 'Unknown')
+                        self.logger.debug(f"제품 '{product_name}' PPL 필터링 통과 - 확률: {ppl_confidence:.3f}")
+                        
+                except Exception as e:
+                    self.logger.warning(f"개별 PPL 필터링 실패: {str(e)}")
+                    # 실패한 경우 안전하게 필터링 통과로 처리
+                    if 'status_info' not in result:
+                        result['status_info'] = {}
+                    result['status_info']['is_ppl'] = False
+                    result['status_info']['ppl_confidence'] = 0.0
+                    if result['status_info'].get('current_status') == 'analysis_complete':
+                        result['status_info']['current_status'] = 'needs_review'
+                    passed_results.append(result)
+                    continue
+            
+            step_time = time.time() - step_start
+            
+            self._log_step("ppl_filtering", "success", 
+                          f"PPL 필터링 완료 - 통과: {len(passed_results)}개, 필터링: {len(filtered_ppl_results)}개 (임계값: {ppl_threshold})", 
+                          step_time,
+                          passed_count=len(passed_results),
+                          filtered_count=len(filtered_ppl_results),
+                          threshold=ppl_threshold)
+            
+            return passed_results, filtered_ppl_results
+            
+        except Exception as e:
+            step_time = time.time() - step_start
+            self._log_step("ppl_filtering", "error", f"PPL 필터링 실패: {str(e)}", step_time)
+            
+            # 실패한 경우 모든 결과를 통과로 처리 (안전 모드)
+            for result in analysis_results:
+                if 'status_info' not in result:
+                    result['status_info'] = {}
+                result['status_info']['is_ppl'] = False
+                result['status_info']['ppl_confidence'] = 0.0
+                if result['status_info'].get('current_status') == 'analysis_complete':
+                    result['status_info']['current_status'] = 'needs_review'
+            
+            return analysis_results, []
+
     async def _step_monetization_verification(self, analysis_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """7단계: 수익화 검증 (쿠팡 파트너스 API)"""
+        """8단계: 수익화 검증 (쿠팡 파트너스 API)"""
         step_start = time.time()
         
         try:
@@ -592,7 +918,7 @@ class AIAnalysisPipeline:
         script_data: List[Dict[str, Any]], 
         video_url: str
     ) -> List[Dict[str, Any]]:
-        """8단계: 매력도 스코어링"""
+        """9단계: 매력도 스코어링"""
         step_start = time.time()
         
         try:
@@ -685,7 +1011,7 @@ class AIAnalysisPipeline:
         analysis_results: List[Dict[str, Any]],
         video_url: str
     ) -> List[Dict[str, Any]]:
-        """9단계: 최종 JSON 스키마 매핑"""
+        """10단계: 최종 JSON 스키마 매핑"""
         step_start = time.time()
         
         try:
@@ -923,9 +1249,167 @@ class AIAnalysisPipeline:
             tone_indicators=None,
             reputation_score=None
         )
+    
+    def _match_visual_analysis_results(self, candidate: Dict[str, Any], visual_analysis_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """후보 구간과 시각 분석 결과 매칭"""
+        candidate_start = candidate.get('start_time', 0)
+        candidate_end = candidate.get('end_time', 0)
+        
+        # 해당 구간과 겹치는 시각 분석 결과 찾기
+        matched_visual_data = {
+            'detected_texts': [],
+            'detected_objects': [],
+            'product_images': [],
+            'frame_analysis_count': 0
+        }
+        
+        for visual_result in visual_analysis_results:
+            timeframe = visual_result.get('target_timeframe', {})
+            visual_start = timeframe.get('start_time', 0)
+            visual_end = timeframe.get('end_time', 0)
+            
+            # 시간대 겹침 확인
+            if visual_start <= candidate_end and visual_end >= candidate_start:
+                # 텍스트 결과 수집
+                summary_texts = visual_result.get('summary_texts', [])
+                matched_visual_data['detected_texts'].extend(summary_texts)
+                
+                # 객체 결과 수집
+                summary_objects = visual_result.get('summary_objects', [])
+                matched_visual_data['detected_objects'].extend(summary_objects)
+                
+                # 제품 이미지 수집 (확장 속성이 있는 경우)
+                if hasattr(visual_result, 'selected_product_images'):
+                    matched_visual_data['product_images'].extend(visual_result.selected_product_images)
+                
+                # 분석된 프레임 수 집계
+                matched_visual_data['frame_analysis_count'] += visual_result.get('successful_analyses', 0)
+        
+        # 중복 제거
+        matched_visual_data['detected_texts'] = list(set(matched_visual_data['detected_texts']))
+        matched_visual_data['detected_objects'] = list(set(matched_visual_data['detected_objects']))
+        
+        return matched_visual_data
+    
+    def _integrate_visual_analysis_to_result(self, result: Dict[str, Any], visual_data: Dict[str, Any]) -> Dict[str, Any]:
+        """시각 분석 결과를 최종 결과에 통합"""
+        try:
+            # 기존 결과에 시각 분석 정보 추가
+            if 'candidate_info' not in result:
+                result['candidate_info'] = {}
+            
+            # OCR로 발견된 텍스트 정보 추가
+            detected_texts = visual_data.get('detected_texts', [])
+            if detected_texts:
+                result['candidate_info']['detected_texts_from_video'] = detected_texts
+                
+                # 제품명과 OCR 텍스트 매칭도 계산
+                product_name = result['candidate_info'].get('product_name_ai', '')
+                if product_name:
+                    text_match_score = self._calculate_visual_text_match(product_name, detected_texts)
+                    result['candidate_info']['visual_text_match_score'] = text_match_score
+            
+            # 객체 탐지 정보 추가
+            detected_objects = visual_data.get('detected_objects', [])
+            if detected_objects:
+                result['candidate_info']['detected_objects_from_video'] = detected_objects
+                
+                # 제품 카테고리와 객체 매칭도 계산
+                category_path = result['candidate_info'].get('category_path', [])
+                if category_path:
+                    object_match_score = self._calculate_visual_object_match(category_path, detected_objects)
+                    result['candidate_info']['visual_object_match_score'] = object_match_score
+            
+            # 제품 이미지 정보 추가
+            product_images = visual_data.get('product_images', [])
+            if product_images:
+                result['candidate_info']['product_images'] = product_images
+                result['candidate_info']['product_image_count'] = len(product_images)
+            
+            # 시각 분석 메타데이터 추가
+            result['candidate_info']['visual_analysis_metadata'] = {
+                'frame_analysis_count': visual_data.get('frame_analysis_count', 0),
+                'has_visual_confirmation': len(detected_texts) > 0 or len(detected_objects) > 0,
+                'visual_confidence_boost': self._calculate_visual_confidence_boost(visual_data)
+            }
+            
+            self.logger.debug(f"시각 분석 결과 통합 완료: 텍스트 {len(detected_texts)}개, 객체 {len(detected_objects)}개")
+            
+        except Exception as e:
+            self.logger.warning(f"시각 분석 결과 통합 실패: {str(e)}")
+        
+        return result
+    
+    def _calculate_visual_text_match(self, product_name: str, detected_texts: List[str]) -> float:
+        """제품명과 OCR 텍스트 매칭도 계산"""
+        if not product_name or not detected_texts:
+            return 0.0
+        
+        product_words = set(product_name.lower().split())
+        max_match_score = 0.0
+        
+        for text in detected_texts:
+            text_words = set(text.lower().split())
+            if text_words and product_words:
+                intersection = product_words.intersection(text_words)
+                union = product_words.union(text_words)
+                jaccard_score = len(intersection) / len(union) if union else 0
+                max_match_score = max(max_match_score, jaccard_score)
+        
+        return round(max_match_score, 3)
+    
+    def _calculate_visual_object_match(self, category_path: List[str], detected_objects: List[str]) -> float:
+        """제품 카테고리와 객체 탐지 매칭도 계산"""
+        if not category_path or not detected_objects:
+            return 0.0
+        
+        # 카테고리를 객체 클래스와 매핑하는 간단한 룰
+        category_to_objects = {
+            '화장품': ['bottle', 'tube', 'container', 'cosmetics'],
+            '패션': ['clothing', 'shirt', 'pants', 'dress', 'shoes'],
+            '액세서리': ['jewelry', 'watch', 'bag', 'accessory'],
+            '전자제품': ['electronics', 'phone', 'computer', 'device'],
+            '식품': ['food', 'drink', 'bottle', 'package']
+        }
+        
+        max_match_score = 0.0
+        for category in category_path:
+            if category in category_to_objects:
+                expected_objects = set(category_to_objects[category])
+                detected_set = set([obj.lower() for obj in detected_objects])
+                
+                intersection = expected_objects.intersection(detected_set)
+                if intersection:
+                    match_score = len(intersection) / len(expected_objects)
+                    max_match_score = max(max_match_score, match_score)
+        
+        return round(max_match_score, 3)
+    
+    def _calculate_visual_confidence_boost(self, visual_data: Dict[str, Any]) -> float:
+        """시각 분석 기반 신뢰도 부스트 계산"""
+        boost = 0.0
+        
+        # 텍스트 발견시 +0.1
+        if visual_data.get('detected_texts'):
+            boost += 0.1
+        
+        # 객체 발견시 +0.1
+        if visual_data.get('detected_objects'):
+            boost += 0.1
+        
+        # 제품 이미지 있을시 +0.05
+        if visual_data.get('product_images'):
+            boost += 0.05
+        
+        # 분석된 프레임 수에 따른 추가 보너스
+        frame_count = visual_data.get('frame_analysis_count', 0)
+        if frame_count >= 5:
+            boost += 0.05
+        
+        return round(min(boost, 0.3), 3)  # 최대 30% 부스트
 
     async def _step_finalization(self, audio_path: Path, video_path: Path):
-        """6단계: 후처리 및 리소스 정리"""
+        """11단계: 후처리 및 리소스 정리"""
         step_start = time.time()
         
         try:
@@ -1070,8 +1554,41 @@ class AIAnalysisPipeline:
             'total_time': total_time,
             'step_breakdown': step_times,
             'steps_completed': len([log for log in self.step_logs if log['status'] == 'success']),
-            'errors_count': len([log for log in self.step_logs if log['status'] == 'error'])
+            'errors_count': len([log for log in self.step_logs if log['status'] == 'error']),
+            'performance_metrics': self.performance_metrics,
+            'memory_usage': {
+                'peak_mb': self.performance_metrics['memory_peak'],
+                'current_mb': self._get_current_memory_usage()
+            }
         }
+    
+    def _get_current_memory_usage(self) -> float:
+        """현재 메모리 사용량 반환 (MB)"""
+        try:
+            memory_info = self.process.memory_info()
+            return memory_info.rss / 1024 / 1024
+        except:
+            return 0.0
+    
+    def cleanup(self):
+        """리소스 정리"""
+        try:
+            # Thread Pool 종료
+            if hasattr(self, 'thread_pool'):
+                self.thread_pool.shutdown(wait=True)
+                self.logger.info("Thread Pool 종료 완료")
+            
+            # 강제 가비지 컬렉션
+            gc.collect()
+            
+            self.logger.info("파이프라인 리소스 정리 완료")
+            
+        except Exception as e:
+            self.logger.warning(f"리소스 정리 중 오류: {str(e)}")
+    
+    def __del__(self):
+        """소멸자에서 리소스 정리"""
+        self.cleanup()
 
 
 # 편의 함수

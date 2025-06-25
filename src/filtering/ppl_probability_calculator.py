@@ -31,18 +31,18 @@ class PPLProbabilityCalculator:
         """PPL 확률 계산기 초기화"""
         self.logger = logging.getLogger(__name__)
         
-        # 가중치 설정 (총합 1.0)
+        # 가중치 설정 (총합 1.0) - 요구사항에 따른 최적화
         self.weights = {
-            'explicit_patterns': 0.6,    # 명시적 패턴에 높은 가중치
-            'implicit_patterns': 0.25,   # 암시적 패턴에 중간 가중치
-            'context_analysis': 0.15     # 컨텍스트 분석에 보조 가중치
+            'explicit_patterns': 0.75,   # 명시적 패턴 가중치 강화 (0.6 -> 0.75)
+            'implicit_patterns': 0.15,   # 암시적 패턴 가중치 감소 (0.25 -> 0.15)  
+            'context_analysis': 0.10     # 컨텍스트 분석 가중치 감소 (0.15 -> 0.10)
         }
         
-        # 확률 임계값 설정
+        # 확률 임계값 설정 - 정확도 개선을 위한 재조정
         self.thresholds = {
-            'high_ppl': 0.8,      # 높은 PPL 가능성
-            'medium_ppl': 0.5,    # 중간 PPL 가능성
-            'low_ppl': 0.2        # 낮은 PPL 가능성
+            'high_ppl': 0.65,     # 높은 PPL 가능성 (0.8 -> 0.65)
+            'medium_ppl': 0.4,    # 중간 PPL 가능성 (0.5 -> 0.4)
+            'low_ppl': 0.15       # 낮은 PPL 가능성 (0.2 -> 0.15)
         }
 
     def calculate_final_probability(
@@ -126,7 +126,7 @@ class PPLProbabilityCalculator:
         pattern_type: str
     ) -> float:
         """
-        패턴 분석 결과에서 특정 유형의 점수 추출
+        패턴 분석 결과에서 특정 유형의 점수 추출 - 개선된 버전
         
         Args:
             pattern_result: 패턴 분석 결과
@@ -136,27 +136,54 @@ class PPLProbabilityCalculator:
             float: 추출된 점수 (0.0-1.0)
         """
         try:
-            # T01A 모듈의 결과 구조에 맞춰 점수 추출
+            # 먼저 pattern_scores에서 직접 추출 시도 (개선된 방식)
+            pattern_scores = pattern_result.get('pattern_scores', {})
+            if pattern_scores:
+                if pattern_type == 'explicit':
+                    score = pattern_scores.get('explicit_score', 0.0)
+                    return min(1.0, max(0.0, score))
+                elif pattern_type == 'implicit':
+                    score = pattern_scores.get('implicit_score', 0.0)
+                    return min(1.0, max(0.0, score))
+            
+            # 기존 방식으로 폴백
             if pattern_type == 'explicit':
                 # 명시적 패턴 점수 추출
                 explicit_matches = pattern_result.get('explicit_matches', [])
                 if explicit_matches:
                     # 가장 높은 confidence를 가진 매치의 점수 사용
-                    max_confidence = max(
-                        match.get('confidence', 0.0) for match in explicit_matches
-                    )
-                    return min(1.0, max_confidence)
+                    confidences = []
+                    for match in explicit_matches:
+                        if isinstance(match, dict):
+                            confidences.append(match.get('confidence', 0.0))
+                        else:
+                            # PPLPatternMatch 객체인 경우
+                            confidences.append(getattr(match, 'confidence', 0.0))
+                    
+                    if confidences:
+                        # 명시적 패턴의 경우 최고 신뢰도 사용 (명확한 증거 우선)
+                        max_confidence = max(confidences)
+                        return min(1.0, max_confidence)
                 return 0.0
                 
             elif pattern_type == 'implicit':
                 # 암시적 패턴 점수 추출
                 implicit_matches = pattern_result.get('implicit_matches', [])
                 if implicit_matches:
-                    # 암시적 패턴들의 평균 confidence 사용
-                    confidences = [
-                        match.get('confidence', 0.0) for match in implicit_matches
-                    ]
-                    return sum(confidences) / len(confidences) if confidences else 0.0
+                    confidences = []
+                    for match in implicit_matches:
+                        if isinstance(match, dict):
+                            confidences.append(match.get('confidence', 0.0))
+                        else:
+                            # PPLPatternMatch 객체인 경우
+                            confidences.append(getattr(match, 'confidence', 0.0))
+                    
+                    if confidences:
+                        # 암시적 패턴의 경우 누적 효과 고려 (여러 약한 증거의 조합)
+                        avg_confidence = sum(confidences) / len(confidences)
+                        # 다중 증거 보너스 (최대 1.3배)
+                        evidence_bonus = min(1.3, 1.0 + (len(confidences) - 1) * 0.1)
+                        return min(1.0, avg_confidence * evidence_bonus)
                 return 0.0
                 
         except (KeyError, TypeError, ValueError) as e:

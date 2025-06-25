@@ -147,7 +147,7 @@ async def run_daily_discovery():
             target_country="KR",
             max_results_per_query=25,
             max_total_candidates=100,
-            min_matching_score=0.3,
+            min_matching_score=0.1,
             search_methods=["keyword_search", "trending", "related_channels"]
         )
         

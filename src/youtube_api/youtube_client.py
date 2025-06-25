@@ -237,7 +237,19 @@ class YouTubeAPIClient:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(logging.INFO)
+        
+        # 안전한 로그 레벨 설정
+        try:
+            if hasattr(self, 'config') and hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+                    logger.setLevel(getattr(logging, level_str))
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
+        except (AttributeError, TypeError):
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -921,6 +933,40 @@ class YouTubeAPIClient:
         
         # 채널 정보 가져오기
         return await self.get_channel_info(video_info.channel_id, use_cache)
+    
+    async def get_video_details(self, video_url_or_id: str, use_cache: bool = True) -> Dict[str, Any]:
+        """
+        YouTube 영상 상세 정보 추출 (get_video_info의 별칭)
+        
+        Args:
+            video_url_or_id: YouTube URL 또는 비디오 ID
+            use_cache: 캐시 사용 여부
+            
+        Returns:
+            영상 상세 정보 딕셔너리
+            
+        Raises:
+            YouTubeAPIError: API 요청 실패 시
+        """
+        video_info = await self.get_video_info(video_url_or_id, use_cache)
+        
+        # VideoInfo 객체를 딕셔너리로 변환
+        return {
+            'video_id': video_info.video_id,
+            'title': video_info.title,
+            'description': video_info.description,
+            'published_at': video_info.published_at,
+            'duration': video_info.duration,
+            'view_count': video_info.view_count,
+            'like_count': video_info.like_count,
+            'comment_count': video_info.comment_count,
+            'thumbnail_url': video_info.thumbnail_url,
+            'channel_id': video_info.channel_id,
+            'channel_title': video_info.channel_title,
+            'category_id': video_info.category_id,
+            'tags': video_info.tags,
+            'language': video_info.language
+        }
     
     def get_quota_status(self) -> Dict[str, Any]:
         """

@@ -27,6 +27,10 @@ class KeyManager:
             master_key: 마스터 키 (없으면 환경변수에서 로드)
             storage_path: 암호화된 키 저장 경로
         """
+        # 로깅 상태 추적 (반복 메시지 방지) - 먼저 초기화
+        self._logged_warnings = set()
+        self._logged_errors = set()
+        
         self.master_key = master_key or os.getenv("MASTER_KEY", "")
         self.storage_path = storage_path or Path("config/encrypted_keys.json")
         self.cipher_suite = self._initialize_cipher()
@@ -36,14 +40,17 @@ class KeyManager:
         # 저장 디렉토리 생성
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         
-        logger.info("API 키 관리 시스템 초기화 완료")
+        logger.debug("API 키 관리 시스템 초기화 완료")
     
     def _initialize_cipher(self) -> Fernet:
         """암호화 도구 초기화"""
         if not self.master_key:
             # 마스터 키가 없으면 생성
             self.master_key = self._generate_master_key()
-            logger.warning("마스터 키가 생성되었습니다. 환경변수 MASTER_KEY를 설정하세요.")
+            # 마스터 키 경고는 한 번만 표시
+            if "master_key_generated" not in self._logged_warnings:
+                logger.warning("마스터 키가 생성되었습니다. 환경변수 MASTER_KEY를 설정하세요.")
+                self._logged_warnings.add("master_key_generated")
         
         # 마스터 키에서 암호화 키 유도
         kdf = PBKDF2HMAC(
@@ -117,7 +124,11 @@ class KeyManager:
             encrypted_data = self._load_encrypted_data()
             
             if key_name not in encrypted_data:
-                logger.warning(f"API 키 '{key_name}'을 찾을 수 없습니다")
+                # 반복적인 키 부재 경고 방지
+                warning_key = f"key_not_found_{key_name}"
+                if warning_key not in self._logged_warnings:
+                    logger.warning(f"API 키 '{key_name}'을 찾을 수 없습니다")
+                    self._logged_warnings.add(warning_key)
                 return None
             
             # 키 복호화
@@ -139,7 +150,11 @@ class KeyManager:
             return decrypted_key
             
         except Exception as e:
-            logger.error(f"API 키 복호화 실패: {str(e)}")
+            # 반복적인 복호화 실패 에러 방지
+            error_key = f"decrypt_failed_{key_name}"
+            if error_key not in self._logged_errors:
+                logger.error(f"API 키 복호화 실패: {str(e)}")
+                self._logged_errors.add(error_key)
             return None
     
     def _load_encrypted_data(self) -> Dict[str, Any]:
@@ -252,7 +267,11 @@ class KeyManager:
             logger.info(f"환경변수 '{key_name.upper()}'에서 키 로드")
             return env_key
         
-        logger.warning(f"API 키 '{key_name}'을 찾을 수 없습니다")
+        # 반복적인 키 부재 경고 방지
+        warning_key = f"safe_key_not_found_{key_name}"
+        if warning_key not in self._logged_warnings:
+            logger.warning(f"API 키 '{key_name}'을 찾을 수 없습니다")
+            self._logged_warnings.add(warning_key)
         return ""
 
 
@@ -264,4 +283,11 @@ def get_key_manager() -> KeyManager:
     global _key_manager
     if _key_manager is None:
         _key_manager = KeyManager()
+    
+    # 로깅 상태 추적 변수가 없으면 추가 (하위 호환성)
+    if not hasattr(_key_manager, '_logged_warnings'):
+        _key_manager._logged_warnings = set()
+    if not hasattr(_key_manager, '_logged_errors'):
+        _key_manager._logged_errors = set()
+    
     return _key_manager

@@ -39,10 +39,27 @@ class GeminiSecondPassAnalyzer:
     def _setup_logger(self) -> logging.Logger:
         """로거 설정"""
         logger = logging.getLogger(__name__)
+        
+        # 안전한 로그 레벨 설정
         try:
-            logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
+            if hasattr(self.config, 'LOG_LEVEL') and isinstance(self.config.LOG_LEVEL, str):
+                level_str = self.config.LOG_LEVEL.upper()
+                if level_str == 'DEBUG':
+                    logger.setLevel(logging.DEBUG)
+                elif level_str == 'INFO':
+                    logger.setLevel(logging.INFO)
+                elif level_str == 'WARNING':
+                    logger.setLevel(logging.WARNING)
+                elif level_str == 'ERROR':
+                    logger.setLevel(logging.ERROR)
+                elif level_str == 'CRITICAL':
+                    logger.setLevel(logging.CRITICAL)
+                else:
+                    logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.INFO)
         except (AttributeError, TypeError):
-            logger.setLevel(logging.INFO)  # 기본값 사용
+            logger.setLevel(logging.INFO)
         
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -73,125 +90,54 @@ class GeminiSecondPassAnalyzer:
             self.logger.error(f"Gemini 클라이언트 초기화 실패: {str(e)}")
             
     def _get_system_prompt(self) -> str:
-        """PRD 기반 시스템 프롬프트 반환"""
-        return """너는 지금부터 소비자의 구매 심리를 꿰뚫는 **'탑티어 커머스 콘텐츠 크리에이터'** 역할을 맡는다. 너의 임무는 주어진 음성 정보를 바탕으로, 즉시 바이럴될 수 있는 인스타그램 릴스 콘텐츠의 모든 구성 요소를 완벽하게 생성하는 것이다.
+        """토큰 최적화된 2차 분석 시스템 프롬프트"""
+        return """You are a product analysis expert creating viral Instagram content.
 
-**핵심 역량:**
-1. **제품 정보 추출**: 음성에서 제품명, 카테고리, 특징을 정확히 파악
-2. **매력도 평가**: 감성 강도, 실사용 인증 강도, 인플루언서 신뢰도를 0-1 척도로 측정
-3. **콘텐츠 생성**: 바이럴 가능한 제목, 해시태그, 캡션 생성
-4. **PPL 탐지**: 유료 광고 확률을 정확히 분석
+**CORE TASKS:**
+1. Extract: Product name, category, features
+2. Score: Sentiment (0-1), Usage proof (0-1), Influencer trust (0-1)
+3. Generate: Titles, hashtags, captions
+4. Detect: PPL probability
 
-**매력도 스코어링 공식:**
-총점 = (0.50 × 감성 강도) + (0.35 × 실사용 인증 강도) + (0.15 × 인플루언서 신뢰도) × 100
+**SCORING FORMULA:**
+Total = (0.50 × sentiment) + (0.35 × usage_proof) + (0.15 × influencer_trust) × 100
 
-**PPL 탐지 기준:**
-- 명시적 광고 표현: "협찬", "제품 제공", "PR", "광고" 등
-- 과도한 칭찬: 부자연스럽게 긍정적인 표현
-- 상업적 맥락: 할인, 이벤트, 구매 링크 언급
+**PPL INDICATORS:** "협찬", "제품 제공", "PR", 과도한 칭찬, 상업적 맥락
 
-**Instagram 콘텐츠 전략:**
-- 제목: 호기심 유발 + 명확한 정보 전달
-- 해시태그: 연예인명 + 제품명 + 카테고리 + 트렌드 키워드
-- 캡션: 친근한 톤 + 핵심 정보 + 구매 욕구 자극
+**CONTENT STRATEGY:** 호기심 + 명확한 정보, 연예인명 + 제품명 + 카테고리 태그
 
-**중요 원칙:**
-- 정보가 부족하면 절대 지어내지 말고 null 또는 빈 배열로 반환
-- 모든 출력은 정확한 JSON 스키마를 준수해야 함
-- 한국어 콘텐츠에 최적화된 자연스러운 표현 사용"""
+**RULE:** Unknown info = null/[], accurate JSON only, natural Korean"""
 
     def _get_user_prompt(self, candidate_data: Dict[str, Any], source_info: Dict[str, Any]) -> str:
-        """사용자 프롬프트 생성"""
-        return f"""아래 [분석할 데이터]를 기반으로, 다음 [지시사항]에 따라 콘텐츠 패키지를 생성하고, 최종 결과는 **아래 [JSON 스키마]**에 맞춰 완벽하게 출력해줘. 정보가 부족하면, 절대 지어내지 말고 `null` 또는 빈 배열 `[]`로 반환해야 한다.
+        """토큰 최적화된 2차 분석 프롬프트"""
+        # 핵심 정보만 추출
+        script_text = self._extract_script_text(candidate_data.get('script_segments', []))
+        
+        return f"""Analyze and create Instagram content package. Return JSON only.
 
-**[분석할 데이터]**
-영상 정보:
-- 연예인명: {source_info.get('celebrity_name', '알 수 없음')}
-- 채널명: {source_info.get('channel_name', '알 수 없음')}
-- 영상 제목: {source_info.get('video_title', '알 수 없음')}
-- 영상 URL: {source_info.get('video_url', '알 수 없음')}
+**DATA:**
+Channel: {source_info.get('channel_name', 'Unknown')}
+Time: {candidate_data.get('start_time', 0)}-{candidate_data.get('end_time', 0)}s
+Script: {script_text[:500]}...
 
-후보 구간 정보:
-- 시작 시간: {candidate_data.get('start_time', 0)}초
-- 종료 시간: {candidate_data.get('end_time', 0)}초
-- 탐지 이유: {candidate_data.get('reason', '알 수 없음')}
-- 신뢰도: {candidate_data.get('confidence_score', 0)}
+**TASKS:**
+1. Extract product name, category [대-중-소], features
+2. Score sentiment/usage/influence (0-1)
+3. Calculate total = (0.5×sentiment + 0.35×usage + 0.15×influence) × 100
+4. Detect PPL probability
+5. Generate 3 titles (50 chars), 8+ hashtags, caption
 
-음성 스크립트:
-{json.dumps(candidate_data.get('script_segments', []), ensure_ascii=False, indent=2)}
-
-**[지시사항]**
-
-1. **제품 정보 추출**:
-   - 제품명을 정확히 파악 (브랜드명 + 제품명 + 색상/옵션)
-   - 카테고리를 대분류 → 중분류 → 소분류 순으로 분류
-   - 화자가 언급한 제품 특징들을 모두 추출
-
-2. **매력도 스코어링**:
-   - 감성 강도: 화자의 감정적 표현 강도 (0-1)
-   - 실사용 인증 강도: 실제 사용 경험의 신뢰도 (0-1)
-   - 인플루언서 신뢰도: 화자/채널의 영향력 평가 (0-1)
-
-3. **PPL 확률 분석**:
-   - 광고성 표현, 과도한 칭찬, 상업적 맥락 종합 평가
-   - 0-1 척도로 PPL 확률 측정
-
-4. **Instagram 콘텐츠 생성**:
-   - 호기심을 유발하는 제목 3개 (각 50자 이내)
-   - 관련 해시태그 8개 이상
-   - 친근한 톤의 캡션용 요약
-
-**[JSON 스키마]**
+**JSON:**
 ```json
 {{
-  "source_info": {{
-    "celebrity_name": "string",
-    "channel_name": "string", 
-    "video_title": "string",
-    "video_url": "string",
-    "upload_date": "YYYY-MM-DD"
-  }},
-  "candidate_info": {{
-    "product_name_ai": "string",
-    "product_name_manual": null,
-    "clip_start_time": number,
-    "clip_end_time": number,
-    "category_path": ["대분류", "중분류", "소분류"],
-    "features": ["특징1", "특징2", ...],
-    "score_details": {{
-      "total": number,
-      "sentiment_score": number,
-      "endorsement_score": number,
-      "influencer_score": number
-    }},
-    "hook_sentence": "string",
-    "summary_for_caption": "string",
-    "target_audience": ["타겟1", "타겟2", ...],
-    "price_point": "저가|중가|프리미엄|럭셔리",
-    "endorsement_type": "string",
-    "recommended_titles": ["제목1", "제목2", "제목3"],
-    "recommended_hashtags": ["#태그1", "#태그2", ...]
-  }},
-  "monetization_info": {{
-    "is_coupang_product": false,
-    "coupang_url_ai": null,
-    "coupang_url_manual": null
-  }},
-  "status_info": {{
-    "current_status": "needs_review",
-    "is_ppl": boolean,
-    "ppl_confidence": number
-  }}
+  "source_info": {{"celebrity_name": "{source_info.get('channel_name', '')}", "channel_name": "{source_info.get('channel_name', '')}", "video_title": "{source_info.get('video_title', '')}", "video_url": "{source_info.get('video_url', '')}", "upload_date": "2025-06-25"}},
+  "candidate_info": {{"product_name_ai": "string", "product_name_manual": null, "clip_start_time": {candidate_data.get('start_time', 0)}, "clip_end_time": {candidate_data.get('end_time', 0)}, "category_path": [], "features": [], "score_details": {{"total": 0, "sentiment_score": 0.0, "endorsement_score": 0.0, "influencer_score": 0.0}}, "hook_sentence": "", "summary_for_caption": "", "target_audience": [], "price_point": "중가", "endorsement_type": "", "recommended_titles": [], "recommended_hashtags": []}},
+  "monetization_info": {{"is_coupang_product": false, "coupang_url_ai": null, "coupang_url_manual": null}},
+  "status_info": {{"current_status": "needs_review", "is_ppl": false, "ppl_confidence": 0.0}}
 }}
 ```
 
-**중요 주의사항:**
-- 제품명이 불분명하면 "확인 필요"로 설정
-- 카테고리는 반드시 1-3개 단계로 구성
-- 특징은 화자가 실제 언급한 내용만 포함
-- 해시태그는 '#' 포함하여 작성
-- 모든 숫자는 소수점 둘째 자리까지만
-- JSON 형식을 정확히 준수하여 출력"""
+Unknown = null/[]. Accurate JSON only."""
 
     def extract_product_info(self, candidate_data: Dict[str, Any], source_info: Dict[str, Any]) -> ProductAnalysisResult:
         """
@@ -233,6 +179,16 @@ class GeminiSecondPassAnalyzer:
             self.logger.error(f"Gemini 2차 분석 실패: {str(e)}")
             return self._get_test_result(candidate_data, source_info)
     
+    def _extract_script_text(self, script_segments: List[Dict[str, Any]]) -> str:
+        """스크립트 세그먼트에서 텍스트만 추출하여 압축"""
+        texts = []
+        for seg in script_segments[:10]:  # 최대 10개 세그먼트만 사용
+            text = seg.get('text', '').strip()
+            if text and len(text) > 20:  # 의미있는 텍스트만
+                texts.append(text[:100])  # 100자로 제한
+        
+        return " ".join(texts)[:400]  # 전체 400자로 제한
+    
     def _call_gemini_api(self, user_prompt: str, max_retries: int = 3) -> str:
         """
         Gemini API 호출 (재시도 로직 포함)
@@ -251,8 +207,10 @@ class GeminiSecondPassAnalyzer:
                 response = self.model.generate_content(
                     user_prompt,
                     generation_config=genai.types.GenerationConfig(
-                        max_output_tokens=self.config.GEMINI_MAX_TOKENS,
-                        temperature=self.config.GEMINI_TEMPERATURE,
+                        max_output_tokens=min(self.config.GEMINI_MAX_TOKENS, 2048),  # 2차 분석용 토큰 제한
+                        temperature=max(0.1, self.config.GEMINI_TEMPERATURE - 0.1),  # 일관성 향상
+                        top_p=0.9,
+                        top_k=40
                     ),
                 )
                 

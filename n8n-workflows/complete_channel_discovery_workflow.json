@@ -1,0 +1,451 @@
+{
+  "name": "Complete Channel Discovery with Google Sheets & Slack",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-schedule",
+      "name": "Daily Schedule (9 AM)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-discovery",
+        "options": {
+          "noResponseBody": false
+        }
+      },
+      "id": "manual-webhook",
+      "name": "Manual Trigger Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [300, 450],
+      "webhookId": "manual-channel-discovery"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 채널 탐색 파라미터 설정\nconst triggerData = $input.all()[0].json;\n\n// 기본 설정\nconst discoveryParams = {\n  keywords: triggerData.keywords || [\"아이유\", \"뷰티\", \"패션\", \"메이크업\", \"스킨케어\"],\n  days_back: triggerData.days_back || 7,\n  max_candidates: triggerData.max_candidates || 50,\n  min_score: triggerData.min_score || 40,\n  session_id: `discovery_${Date.now()}`,\n  start_time: new Date().toISOString()\n};\n\nconsole.log('채널 탐색 시작:', discoveryParams);\n\nreturn [{ json: discoveryParams }];"
+      },
+      "id": "setup-discovery",
+      "name": "Setup Discovery Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 375]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.CHANNEL_DISCOVERY_API_URL || 'http://localhost:5001' }}/discover",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "={{ JSON.stringify($json.keywords) }}"
+            },
+            {
+              "name": "days_back",
+              "value": "={{ $json.days_back }}"
+            },
+            {
+              "name": "max_candidates",
+              "value": "={{ $json.max_candidates }}"
+            },
+            {
+              "name": "min_score",
+              "value": "={{ $json.min_score }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "run-discovery",
+      "name": "Run Channel Discovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [700, 375]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 채널 탐색 결과 처리\nconst discoveryResult = $json;\nconst setupData = $('Setup Discovery Parameters').item.json;\n\n// 결과 통계 계산\nconst candidates = discoveryResult.candidates || [];\nconst totalCandidates = candidates.length;\nconst highScoreCandidates = candidates.filter(c => c.total_score >= 70).length;\nconst verifiedCandidates = candidates.filter(c => c.verified).length;\n\n// 결과 데이터 구성\nconst processedResult = {\n  session_id: setupData.session_id,\n  start_time: setupData.start_time,\n  end_time: new Date().toISOString(),\n  execution_time: discoveryResult.execution_time_seconds || 0,\n  total_candidates: totalCandidates,\n  high_score_candidates: highScoreCandidates,\n  verified_candidates: verifiedCandidates,\n  candidates: candidates,\n  success: discoveryResult.success || false,\n  session_stats: discoveryResult.session_stats || {},\n  search_params: setupData\n};\n\nconsole.log(`채널 탐색 완료: ${totalCandidates}개 후보 발견`);\n\nreturn [{ json: processedResult }];"
+      },
+      "id": "process-results",
+      "name": "Process Discovery Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 375]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-candidates",
+              "leftValue": "={{ $json.total_candidates }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-results",
+      "name": "Check If Results Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 375]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Channel Discovery Results",
+          "mode": "name"
+        },
+        "columnNames": "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P",
+        "options": {
+          "useAppend": true
+        }
+      },
+      "id": "save-to-sheets",
+      "name": "Save Results to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1300, 275]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Google Sheets용 데이터 변환\nconst result = $json;\nconst candidates = result.candidates || [];\n\nconst sheetsData = [];\nconst currentTime = new Date().toISOString().replace('T', ' ').substring(0, 19);\n\nfor (const candidate of candidates) {\n  sheetsData.push({\n    A: currentTime,                                    // 발견일시\n    B: result.session_id,                             // 세션ID\n    C: candidate.channel_name || '',                  // 채널명\n    D: candidate.channel_id || '',                    // 채널ID\n    E: candidate.subscriber_count || 0,               // 구독자수\n    F: candidate.video_count || 0,                    // 비디오수\n    G: (candidate.total_score || 0).toFixed(2),      // 총점수\n    H: (candidate.matching_score || 0).toFixed(2),   // 매칭점수\n    I: (candidate.quality_score || 0).toFixed(2),    // 품질점수\n    J: (candidate.potential_score || 0).toFixed(2),  // 잠재력점수\n    K: (candidate.monetization_score || 0).toFixed(2), // 수익화점수\n    L: candidate.verified ? \"✓\" : \"✗\",               // 인증여부\n    M: candidate.country || '',                      // 국가\n    N: candidate.channel_type || '',                 // 채널타입\n    O: (candidate.description || '').substring(0, 100) + (candidate.description && candidate.description.length > 100 ? '...' : ''), // 설명\n    P: candidate.channel_url || ''                   // 채널URL\n  });\n}\n\nconsole.log(`Google Sheets 저장용 데이터 준비: ${sheetsData.length}개 행`);\n\nreturn sheetsData.map(data => ({ json: data }));"
+      },
+      "id": "format-for-sheets",
+      "name": "Format Data for Google Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 175]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "🎉 채널 디스커버리 완료! {{ $json.total_candidates }}개 후보 발견"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([\n  {\n    \"type\": \"header\",\n    \"text\": {\n      \"type\": \"plain_text\",\n      \"text\": \"🎉 채널 디스커버리 완료!\"\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"fields\": [\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*발견된 후보:*\\n\" + $json.total_candidates + \"개\"\n      },\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*고득점 후보:*\\n\" + $json.high_score_candidates + \"개\"\n      },\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*실행 시간:*\\n\" + $json.execution_time.toFixed(1) + \"초\"\n      },\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*세션 ID:*\\n\" + $json.session_id\n      }\n    ]\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"📊 *상위 후보들:*\\n\" + $json.candidates.slice(0, 5).map((c, i) => `${i+1}. <${c.channel_url}|${c.channel_name}> (${c.total_score.toFixed(1)}점, ${c.subscriber_count.toLocaleString()}명) ${c.verified ? '✓' : '✗'}`).join('\\n')\n    }\n  },\n  {\n    \"type\": \"divider\"\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"📋 <https://docs.google.com/spreadsheets/d/\" + $env.GOOGLE_SHEETS_SPREADSHEET_ID + \"|Google Sheets에서 전체 결과 확인>\"\n    }\n  },\n  {\n    \"type\": \"context\",\n    \"elements\": [\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"완료 시간: \" + new Date().toLocaleString('ko-KR') + \" | 시스템: n8n 자동화\"\n      }\n    ]\n  }\n]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-slack-success",
+      "name": "Notify Slack - Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1500, 275]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "😔 채널 디스커버리 완료 - 새로운 후보 없음"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([\n  {\n    \"type\": \"header\",\n    \"text\": {\n      \"type\": \"plain_text\",\n      \"text\": \"😔 채널 디스커버리 완료\"\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"*결과:* 새로운 채널 후보를 찾지 못했습니다.\\n\\n*실행 시간:* \" + $json.execution_time.toFixed(1) + \"초\\n*세션 ID:* \" + $json.session_id\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"💡 *제안:*\\n• 검색 키워드 조정\\n• 점수 기준 낮추기\\n• 검색 기간 늘리기\"\n    }\n  },\n  {\n    \"type\": \"context\",\n    \"elements\": [\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"완료 시간: \" + new Date().toLocaleString('ko-KR') + \" | 시스템: n8n 자동화\"\n      }\n    ]\n  }\n]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-slack-no-results",
+      "name": "Notify Slack - No Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1300, 475]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 에러 처리 및 알림 준비\nconst error = $input.all()[0];\nconst setupData = $('Setup Discovery Parameters').item.json;\n\nconst errorData = {\n  session_id: setupData.session_id,\n  error_time: new Date().toISOString(),\n  error_message: error.message || '알 수 없는 오류',\n  error_details: JSON.stringify(error, null, 2),\n  execution_time: ((new Date() - new Date(setupData.start_time)) / 1000).toFixed(1)\n};\n\nconsole.error('채널 탐색 실패:', errorData);\n\nreturn [{ json: errorData }];"
+      },
+      "id": "handle-error",
+      "name": "Handle Discovery Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 575]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "❌ 채널 디스커버리 실패"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([\n  {\n    \"type\": \"header\",\n    \"text\": {\n      \"type\": \"plain_text\",\n      \"text\": \"❌ 채널 디스커버리 실패\"\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"*오류 내용:*\\n```\" + $json.error_message + \"```\\n\\n*세션 ID:* \" + $json.session_id + \"\\n*발생 시간:* \" + new Date($json.error_time).toLocaleString('ko-KR')\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": \"🔧 *필요한 조치:*\\n• API 서버 상태 확인\\n• 로그 파일 검토\\n• 시스템 재시작 고려\"\n    }\n  },\n  {\n    \"type\": \"context\",\n    \"elements\": [\n      {\n        \"type\": \"mrkdwn\",\n        \"text\": \"시스템: n8n 자동화 | 즉시 확인 필요\"\n      }\n    ]\n  }\n]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-slack-error",
+      "name": "Notify Slack - Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 575]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.CHANNEL_DISCOVERY_API_URL || 'http://localhost:5001' }}/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "health-check",
+      "name": "API Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 575]
+    }
+  ],
+  "connections": {
+    "Daily Schedule (9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Setup Discovery Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger Webhook": {
+      "main": [
+        [
+          {
+            "node": "Setup Discovery Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setup Discovery Parameters": {
+      "main": [
+        [
+          {
+            "node": "Run Channel Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Channel Discovery": {
+      "main": [
+        [
+          {
+            "node": "Process Discovery Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Discovery Results": {
+      "main": [
+        [
+          {
+            "node": "Check If Results Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Results Found": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Slack - No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data for Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Save Results to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Results to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [
+          {
+            "node": "Handle Discovery Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Discovery Error": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack - Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "createdAt": "2025-06-25T00:00:00.000Z",
+  "updatedAt": "2025-06-25T00:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-workflow"
+    }
+  },
+  "staticData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

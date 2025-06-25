@@ -203,7 +203,7 @@ class ProductAnalysisResult(BaseModel):
 
     class Config:
         """Pydantic 설정"""
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "source_info": {
                     "celebrity_name": "강민경",

@@ -88,3 +88,7 @@ yolo_*.md
 
 # Product images (temporary data)
 temp/product_images/
+
+# Screenshots
+screenshot/
+screenshots/

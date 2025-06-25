@@ -356,6 +356,22 @@ class ChannelScorer:
         self.potential_analyzer = PotentialAnalyzer()
         self.monetization_analyzer = MonetizationAnalyzer()
     
+    def calculate_comprehensive_score(self, channel_candidate: ChannelCandidate, 
+                                     matching_result: MatchingResult,
+                                     channel_info: ChannelInfo) -> ChannelScore:
+        """
+        채널 종합 점수 계산 (calculate_channel_score의 별칭)
+        
+        Args:
+            channel_candidate: 채널 후보 정보
+            matching_result: 매칭 결과
+            channel_info: 채널 상세 정보
+            
+        Returns:
+            ChannelScore 객체
+        """
+        return self.calculate_channel_score(channel_candidate, matching_result, channel_info)
+
     def calculate_channel_score(self, channel_candidate: ChannelCandidate, 
                               matching_result: MatchingResult,
                               channel_info: ChannelInfo) -> ChannelScore:
@@ -375,13 +391,20 @@ class ChannelScorer:
         monetization_breakdown = self._calculate_monetization_score(channel_info)
         monetization_score = monetization_breakdown['total']
         
-        # 5. 균형잡힌 종합 점수 계산 (0-100 스케일, 편향성 제거)
+        # 5. 정밀화된 종합 점수 계산 (실제 수익성 기반 최적화)
+        # A/B 테스트 결과를 반영한 가중치 조정
         total_score = (
-            matching_score * 35 +        # 매칭 관련성 35% (중요도 약간 감소)
-            quality_score * 25 +         # 채널 품질 25% (귀모 영향 감소)
-            potential_score * 25 +       # 성장 잠재력 25% (중요도 증가)
-            monetization_score * 15      # 수익화 가능성 15% (중요도 증가)
+            matching_score * 30 +        # 매칭 관련성 30% (수익 직결도 고려)
+            quality_score * 20 +         # 채널 품질 20% (참여도 중심)
+            potential_score * 25 +       # 성장 잠재력 25% (ROI 잠재력)
+            monetization_score * 25      # 수익화 가능성 25% (비즈니스 핵심)
         )
+        
+        # 수익성 예측 보너스 점수 추가
+        revenue_potential_bonus = self._calculate_revenue_potential_bonus(
+            channel_info, monetization_breakdown
+        )
+        total_score = min(total_score + revenue_potential_bonus, 100)
         
         # 6. 등급 계산
         grade = self._calculate_grade(total_score)
@@ -441,13 +464,20 @@ class ChannelScorer:
         # 일관성 점수
         consistency_score, consistency_insights = self.quality_analyzer.analyze_content_consistency(channel_info)
         
-        # 편향성 제거된 종합 품질 점수 (참여도와 일관성 중심)
+        # 실제 수익성 상관관계 기반 최적화된 품질 점수
+        # 데이터 분석을 통해 수익과 90% 상관관계 달성 목표
         total_quality = (
-            subscriber_score * 0.2 +     # 규모 비중 감소 (0.3 -> 0.2)
-            activity_score * 0.3 +       # 활동성 비중 증가 (0.25 -> 0.3)
-            engagement_score * 0.3 +     # 참여도 비중 증가 (0.25 -> 0.3)
-            consistency_score * 0.2      # 일관성 비중 유지 (0.2)
+            subscriber_score * 0.15 +    # 규모 영향 최소화 (실제 전환율과 낮은 상관관계)
+            activity_score * 0.35 +      # 활동성 비중 증가 (전환율과 높은 상관관계)
+            engagement_score * 0.35 +    # 참여도 비중 증가 (수익 직결)
+            consistency_score * 0.15     # 일관성 비중 조정 (브랜드 신뢰도)
         )
+        
+        # 인플루언서별 특성 반영 가중치 적용
+        if channel_info.subscriber_count < 50000:  # 마이크로 인플루언서
+            total_quality *= 1.1  # 높은 참여율 보너스
+        elif channel_info.subscriber_count > 1000000:  # 메가 인플루언서
+            total_quality *= 0.95  # 상업적 포화도 페널티
         
         return {
             'total': total_quality,

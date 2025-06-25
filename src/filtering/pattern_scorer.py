@@ -50,21 +50,21 @@ class PatternScorer:
         return {
             "scoring_weights": {
                 "explicit_patterns": {
-                    "direct_disclosure": 0.6,
-                    "hashtag_disclosure": 0.55,
-                    "description_patterns": 0.5
+                    "direct_disclosure": 0.85,     # 명시적 패턴 가중치 더 강화
+                    "hashtag_disclosure": 0.80,    # 해시태그 패턴 강화
+                    "description_patterns": 0.75   # 설명 패턴 강화
                 },
                 "implicit_patterns": {
-                    "promotional_language": 0.25,
-                    "commercial_context": 0.3,
-                    "purchase_guidance": 0.35,
-                    "timing_patterns": 0.4
+                    "promotional_language": 0.45,  # 프로모션 언어 강화
+                    "commercial_context": 0.50,    # 상업적 컨텍스트 강화
+                    "purchase_guidance": 0.60,     # 구매 유도 강화
+                    "timing_patterns": 0.65        # 타이밍 압박 강화
                 }
             },
             "thresholds": {
-                "high_ppl_probability": 0.8,
-                "medium_ppl_probability": 0.5,
-                "low_ppl_probability": 0.2
+                "high_ppl_probability": 0.65,     # 요구사항에 따른 임계값
+                "medium_ppl_probability": 0.4,    # 요구사항에 따른 임계값
+                "low_ppl_probability": 0.15       # 요구사항에 따른 임계값
             }
         }
     
@@ -146,28 +146,48 @@ class PatternScorer:
             score = match.confidence * match.pattern.weight
             category_scores[category].append(score)
         
-        # 암시적 패턴은 누적 효과 고려 (여러 증거의 조합)
+        # 암시적 패턴은 누적 효과 고려 (여러 증거의 조합) - 강화된 버전
         total_score = 0.0
+        total_evidence_count = sum(len(scores) for scores in category_scores.values())
+        
         for category, scores in category_scores.items():
             # 카테고리 내 점수들의 가중 평균
             avg_score = sum(scores) / len(scores)
             weight = weights.get(category, 0.3)
             
-            # 다중 증거 보너스 (최대 1.2배)
-            evidence_bonus = min(1.2, 1.0 + (len(scores) - 1) * 0.1)
+            # 카테고리별 증거 개수에 따른 보너스 (최대 1.3배)
+            category_evidence_bonus = min(1.3, 1.0 + (len(scores) - 1) * 0.15)
             
-            total_score += avg_score * weight * evidence_bonus
+            # 전체 증거 개수에 따른 추가 보너스 (복합적 증거)
+            if total_evidence_count >= 4:  # 4개 이상의 증거
+                global_evidence_bonus = 1.2
+            elif total_evidence_count >= 3:  # 3개 이상의 증거  
+                global_evidence_bonus = 1.1
+            else:
+                global_evidence_bonus = 1.0
+            
+            category_score = avg_score * weight * category_evidence_bonus * global_evidence_bonus
+            total_score += category_score
         
         return min(1.0, total_score)
     
     def _calculate_combined_score(self, explicit_score: float, implicit_score: float) -> float:
-        """종합 점수 계산"""
-        # 명시적 패턴이 있으면 높은 가중치
-        if explicit_score > 0.5:
-            return explicit_score * 0.8 + implicit_score * 0.2
+        """종합 점수 계산 - 개선된 버전"""
+        # 명시적 패턴이 강하면 높은 가중치
+        if explicit_score > 0.6:
+            return explicit_score * 0.85 + implicit_score * 0.15
+        elif explicit_score > 0.3:
+            # 중간 수준 명시적 패턴
+            return explicit_score * 0.65 + implicit_score * 0.35
         else:
-            # 명시적 패턴이 약하면 암시적 패턴도 고려
-            return explicit_score * 0.4 + implicit_score * 0.6
+            # 명시적 패턴이 약하거나 없으면 암시적 패턴 중심
+            # 암시적 패턴이 다수 있을 때 더 높은 점수
+            if implicit_score > 0.4:
+                # 암시적 패턴 강화 보너스
+                implicit_bonus = min(1.0, implicit_score * 1.4)
+                return explicit_score * 0.2 + implicit_bonus * 0.8
+            else:
+                return explicit_score * 0.3 + implicit_score * 0.7
     
     def _calculate_confidence(self, explicit_matches: List[PatternMatch], 
                             implicit_matches: List[PatternMatch]) -> float:

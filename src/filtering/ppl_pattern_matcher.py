@@ -71,17 +71,34 @@ class PPLPatternMatcher:
         }
     
     def _compile_patterns(self) -> Dict[str, List[Tuple[PPLPattern, re.Pattern]]]:
-        """정규식 패턴 컴파일"""
+        """정규식 패턴 컴파일 - 유연한 매칭을 위한 개선"""
         compiled = {}
         
         for category, pattern_list in self.patterns.get_all_patterns().items():
             compiled[category] = []
             for pattern in pattern_list:
                 try:
-                    # 기본 정규식 패턴 생성 (단어 경계 고려)
-                    regex_pattern = rf'\b{re.escape(pattern.pattern)}\b'
-                    compiled_regex = re.compile(regex_pattern, re.IGNORECASE)
+                    # 패턴 타입에 따른 다양한 정규식 생성
+                    patterns_to_compile = []
+                    
+                    # 1. 정확한 매칭 (단어 경계 있음)
+                    exact_pattern = rf'\b{re.escape(pattern.pattern)}\b'
+                    patterns_to_compile.append(exact_pattern)
+                    
+                    # 2. 부분 매칭 (단어 경계 없음) - 더 유연한 매칭
+                    partial_pattern = re.escape(pattern.pattern)
+                    patterns_to_compile.append(partial_pattern)
+                    
+                    # 3. 해시태그 패턴인 경우 해시태그 없는 버전도 추가
+                    if pattern.pattern.startswith('#'):
+                        no_hash_pattern = rf'\b{re.escape(pattern.pattern[1:])}\b'
+                        patterns_to_compile.append(no_hash_pattern)
+                    
+                    # 모든 패턴을 OR로 결합
+                    combined_pattern = '|'.join(f'({p})' for p in patterns_to_compile)
+                    compiled_regex = re.compile(combined_pattern, re.IGNORECASE)
                     compiled[category].append((pattern, compiled_regex))
+                    
                 except re.error as e:
                     self.logger.warning(f"정규식 컴파일 실패: {pattern.pattern}, 오류: {e}")
         
@@ -110,26 +127,39 @@ class PPLPatternMatcher:
         return matches
     
     def _find_pattern_matches(self, text: str, category: str) -> List[PatternMatch]:
-        """특정 카테고리의 패턴 매칭 수행"""
+        """특정 카테고리의 패턴 매칭 수행 - 중복 제거 및 정확도 개선"""
         matches = []
+        matched_positions = set()  # 중복 매칭 방지
         
         if category not in self._compiled_patterns:
             return matches
         
-        for pattern, compiled_regex in self._compiled_patterns[category]:
+        # 패턴을 가중치 순으로 정렬하여 높은 가중치 패턴을 우선 매칭
+        sorted_patterns = sorted(
+            self._compiled_patterns[category],
+            key=lambda x: x[0].weight,
+            reverse=True
+        )
+        
+        for pattern, compiled_regex in sorted_patterns:
             # 정확 매칭 시도
             exact_matches = self._find_exact_matches(text, pattern, compiled_regex)
-            matches.extend(exact_matches)
+            
+            # 중복되지 않는 매칭만 추가
+            for match in exact_matches:
+                position_range = range(match.start_position, match.end_position)
+                if not any(pos in matched_positions for pos in position_range):
+                    matches.append(match)
+                    matched_positions.update(position_range)
             
             # 퍼지 매칭 시도 (정확 매칭이 없고 설정이 활성화된 경우)
             if not exact_matches and self.config.get("fuzzy_matching", {}).get("enabled", True):
                 fuzzy_matches = self._find_fuzzy_matches(text, pattern)
-                matches.extend(fuzzy_matches)
-            
-            # 부분 문자열 매칭 시도 (더 유연한 매칭)
-            if not exact_matches and not fuzzy_matches:
-                substring_matches = self._find_substring_matches(text, pattern)
-                matches.extend(substring_matches)
+                for match in fuzzy_matches:
+                    position_range = range(match.start_position, match.end_position)
+                    if not any(pos in matched_positions for pos in position_range):
+                        matches.append(match)
+                        matched_positions.update(position_range)
         
         return matches
     
@@ -213,13 +243,20 @@ class PPLPatternMatcher:
         return SequenceMatcher(None, text1, text2).ratio()
     
     def _calculate_exact_match_confidence(self, pattern: PPLPattern, matched_text: str) -> float:
-        """정확 매칭의 신뢰도 계산"""
+        """정확 매칭의 신뢰도 계산 - 개선된 버전"""
         base_confidence = pattern.weight
         
         # 매칭된 텍스트 길이에 따른 보정
         length_factor = min(1.0, len(matched_text) / len(pattern.pattern))
         
-        return base_confidence * length_factor
+        # 명시적 패턴에 대한 추가 보너스
+        explicit_bonus = 1.1 if pattern.category in ['direct_disclosure', 'hashtag_disclosure'] else 1.0
+        
+        # 높은 가중치 패턴에 대한 추가 보너스
+        weight_bonus = 1.05 if pattern.weight >= 0.9 else 1.0
+        
+        confidence = base_confidence * length_factor * explicit_bonus * weight_bonus
+        return min(1.0, confidence)
     
     def _calculate_fuzzy_match_confidence(self, pattern: PPLPattern, similarity: float) -> float:
         """퍼지 매칭의 신뢰도 계산"""

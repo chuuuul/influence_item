@@ -1,0 +1,325 @@
+{
+  "name": "02. Channel Discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-channel-discovery",
+        "options": {
+          "noResponseBody": false
+        }
+      },
+      "id": "manual-trigger",
+      "name": "Manual Channel Discovery Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [300, 300],
+      "webhookId": "channel-discovery-trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 채널 탐색 파라미터 설정\nconst triggerData = $input.all()[0].json;\n\n// 기본 설정\nconst discoveryParams = {\n  keywords: triggerData.keywords || [\"아이유\", \"뷰티\", \"패션\", \"메이크업\", \"스킨케어\"],\n  days_back: triggerData.days_back || 7,\n  max_candidates: triggerData.max_candidates || 50,\n  min_score: triggerData.min_score || 40,\n  search_period: triggerData.search_period || \"week\",\n  channel_types: triggerData.channel_types || [\"personal\", \"media\"],\n  session_id: `discovery_${Date.now()}`,\n  start_time: new Date().toISOString()\n};\n\nconsole.log('채널 탐색 시작:', discoveryParams);\n\nreturn [{ json: discoveryParams }];"
+      },
+      "id": "setup-discovery-params",
+      "name": "Setup Discovery Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.CHANNEL_DISCOVERY_API_URL || 'http://localhost:5001' }}/discover",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "={{ JSON.stringify($json.keywords) }}"
+            },
+            {
+              "name": "days_back",
+              "value": "={{ $json.days_back }}"
+            },
+            {
+              "name": "max_candidates",
+              "value": "={{ $json.max_candidates }}"
+            },
+            {
+              "name": "min_score",
+              "value": "={{ $json.min_score }}"
+            },
+            {
+              "name": "search_period",
+              "value": "={{ $json.search_period }}"
+            },
+            {
+              "name": "channel_types",
+              "value": "={{ JSON.stringify($json.channel_types) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "run-channel-discovery",
+      "name": "Run Channel Discovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 채널 탐색 결과 처리\nconst discoveryResult = $json;\nconst setupData = $('Setup Discovery Parameters').item.json;\n\n// 결과 통계 계산\nconst candidates = discoveryResult.candidates || [];\nconst totalCandidates = candidates.length;\nconst highScoreCandidates = candidates.filter(c => c.total_score >= 70).length;\nconst verifiedCandidates = candidates.filter(c => c.verified).length;\n\n// Google Sheets 저장용 데이터 준비\nconst sheetsData = [];\nconst currentTime = new Date().toISOString().replace('T', ' ').substring(0, 19);\n\nfor (const candidate of candidates) {\n  sheetsData.push({\n    discovery_date: currentTime,\n    session_id: setupData.session_id,\n    channel_name: candidate.channel_name || '',\n    channel_id: candidate.channel_id || '',\n    channel_handle: candidate.channel_handle || '',\n    subscriber_count: candidate.subscriber_count || 0,\n    video_count: candidate.video_count || 0,\n    total_score: (candidate.total_score || 0).toFixed(2),\n    matching_score: (candidate.matching_score || 0).toFixed(2),\n    quality_score: (candidate.quality_score || 0).toFixed(2),\n    potential_score: (candidate.potential_score || 0).toFixed(2),\n    verified: candidate.verified ? \"✓\" : \"✗\",\n    country: candidate.country || '',\n    channel_type: candidate.channel_type || '',\n    description: (candidate.description || '').substring(0, 100) + (candidate.description && candidate.description.length > 100 ? '...' : ''),\n    channel_url: candidate.channel_url || '',\n    status: 'needs_review'\n  });\n}\n\n// 결과 데이터 구성\nconst processedResult = {\n  session_id: setupData.session_id,\n  start_time: setupData.start_time,\n  end_time: new Date().toISOString(),\n  execution_time: discoveryResult.execution_time_seconds || 0,\n  total_candidates: totalCandidates,\n  high_score_candidates: highScoreCandidates,\n  verified_candidates: verifiedCandidates,\n  candidates: candidates,\n  sheets_data: sheetsData,\n  success: discoveryResult.success || false,\n  session_stats: discoveryResult.session_stats || {},\n  search_params: setupData\n};\n\nconsole.log(`채널 탐색 완료: ${totalCandidates}개 후보 발견`);\n\nreturn [{ json: processedResult }];"
+      },
+      "id": "process-discovery-results",
+      "name": "Process Discovery Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-candidates",
+              "leftValue": "={{ $json.total_candidates }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-discovery-results",
+      "name": "Check If Candidates Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Google Sheets용 데이터 변환\nconst result = $json;\nconst sheetsData = result.sheets_data || [];\n\nconsole.log(`Google Sheets 저장용 데이터 준비: ${sheetsData.length}개 행`);\n\nreturn sheetsData.map(data => ({ json: data }));"
+      },
+      "id": "format-for-sheets",
+      "name": "Format Data for Google Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Channel Discovery Results",
+          "mode": "name"
+        },
+        "columnNames": "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q",
+        "options": {
+          "useAppend": true
+        }
+      },
+      "id": "save-to-sheets",
+      "name": "Save Results to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "🎯 채널 탐색 완료! {{ $json.total_candidates }}개 후보 발견"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([{\"type\": \"header\", \"text\": {\"type\": \"plain_text\", \"text\": \"🎯 채널 탐색 완료!\"}}, {\"type\": \"section\", \"fields\": [{\"type\": \"mrkdwn\", \"text\": \"*발견된 후보:*\\n\" + $json.total_candidates + \"개\"}, {\"type\": \"mrkdwn\", \"text\": \"*고득점 후보:*\\n\" + $json.high_score_candidates + \"개\"}, {\"type\": \"mrkdwn\", \"text\": \"*인증 채널:*\\n\" + $json.verified_candidates + \"개\"}, {\"type\": \"mrkdwn\", \"text\": \"*실행 시간:*\\n\" + $json.execution_time.toFixed(1) + \"초\"}]}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"🏆 *상위 후보들:*\\n\" + $json.candidates.slice(0, 5).map((c, i) => `${i+1}. <${c.channel_url}|${c.channel_name}> (${c.total_score.toFixed(1)}점, ${c.subscriber_count.toLocaleString()}명) ${c.verified ? '✓' : '✗'}`).join('\\n')}}, {\"type\": \"divider\"}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"📋 <https://docs.google.com/spreadsheets/d/\" + $env.GOOGLE_SHEETS_SPREADSHEET_ID + \"|Google Sheets에서 전체 결과 확인>\"}}, {\"type\": \"context\", \"elements\": [{\"type\": \"mrkdwn\", \"text\": \"완료 시간: \" + new Date().toLocaleString('ko-KR') + \" | 세션: \" + $json.session_id}]}]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-success",
+      "name": "Notify Discovery Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "😔 채널 탐색 완료 - 새로운 후보 없음"
+            },
+            {
+              "name": "blocks",
+              "value": "={{ JSON.stringify([{\"type\": \"header\", \"text\": {\"type\": \"plain_text\", \"text\": \"😔 채널 탐색 완료\"}}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"*결과:* 검색 조건에 맞는 새로운 채널 후보를 찾지 못했습니다.\\n\\n*실행 시간:* \" + $json.execution_time.toFixed(1) + \"초\\n*세션 ID:* \" + $json.session_id}}, {\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"💡 *제안:*\\n• 검색 키워드 조정\\n• 점수 기준 낮추기\\n• 검색 기간 늘리기\"}}, {\"type\": \"context\", \"elements\": [{\"type\": \"mrkdwn\", \"text\": \"완료 시간: \" + new Date().toLocaleString('ko-KR') + \" | 시스템: n8n 자동화\"}]}]) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-no-results",
+      "name": "Notify No Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1300, 400]
+    }
+  ],
+  "connections": {
+    "Manual Channel Discovery Trigger": {
+      "main": [
+        [
+          {
+            "node": "Setup Discovery Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setup Discovery Parameters": {
+      "main": [
+        [
+          {
+            "node": "Run Channel Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Channel Discovery": {
+      "main": [
+        [
+          {
+            "node": "Process Discovery Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Discovery Results": {
+      "main": [
+        [
+          {
+            "node": "Check If Candidates Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Candidates Found": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data for Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Save Results to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Results to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Notify Discovery Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "createdAt": "2025-06-25T07:00:00.000Z",
+  "updatedAt": "2025-06-25T07:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "tags": []
+}

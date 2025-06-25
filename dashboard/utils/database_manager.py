@@ -11,7 +11,7 @@ import logging
 import time
 import threading
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from functools import lru_cache
 import sys
@@ -166,11 +166,17 @@ class DatabaseManager:
         with self._pool_lock:
             if thread_id not in self._connection_pool:
                 conn = sqlite3.connect(self.db_path, check_same_thread=False)
-                # 성능 최적화 설정
+                # 고급 성능 최적화 설정
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
-                conn.execute("PRAGMA cache_size=10000")
+                conn.execute("PRAGMA cache_size=20000")  # 캐시 크기 증가
                 conn.execute("PRAGMA temp_store=MEMORY")
+                conn.execute("PRAGMA mmap_size=268435456")  # 256MB 메모리 맵
+                conn.execute("PRAGMA page_size=4096")  # 페이지 크기 최적화
+                conn.execute("PRAGMA wal_autocheckpoint=1000")  # WAL 체크포인트 최적화
+                conn.execute("PRAGMA optimize")  # 쿼리 플래너 최적화
+                
+                # 연결 풀에 추가
                 self._connection_pool[thread_id] = conn
                 
             return self._connection_pool[thread_id]
@@ -799,8 +805,277 @@ class DatabaseManager:
             logger.error(f"Failed to get popular search queries: {e}")
             return []
     
+    def save_candidates_batch(self, candidates_data: List[Dict[str, Any]]) -> int:
+        """
+        후보 데이터 배치 저장 (성능 최적화)
+        
+        Args:
+            candidates_data: 후보 데이터 목록
+            
+        Returns:
+            성공적으로 저장된 개수
+        """
+        if not candidates_data:
+            return 0
+            
+        saved_count = 0
+        try:
+            conn = self._get_connection()
+            conn.execute("BEGIN IMMEDIATE")  # 즉시 배타적 트랜잭션 시작
+            
+            for candidate_data in candidates_data:
+                try:
+                    candidate_id = self._extract_candidate_id(candidate_data)
+                    if not candidate_id:
+                        logger.warning("Candidate ID not found, skipping")
+                        continue
+                    
+                    now = datetime.now().isoformat()
+                    
+                    # UPSERT 쿼리 사용 (SQLite 3.24+)
+                    conn.execute("""
+                        INSERT INTO candidates (id, source_info, candidate_info, monetization_info, status_info, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            source_info = excluded.source_info,
+                            candidate_info = excluded.candidate_info,
+                            monetization_info = excluded.monetization_info,
+                            status_info = excluded.status_info,
+                            updated_at = excluded.updated_at
+                    """, (
+                        candidate_id,
+                        json.dumps(candidate_data.get("source_info", {}), ensure_ascii=False),
+                        json.dumps(candidate_data.get("candidate_info", {}), ensure_ascii=False),
+                        json.dumps(candidate_data.get("monetization_info", {}), ensure_ascii=False),
+                        json.dumps(candidate_data.get("status_info", {}), ensure_ascii=False),
+                        now,
+                        now
+                    ))
+                    saved_count += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to save individual candidate: {e}")
+                    continue
+                    
+            conn.execute("COMMIT")
+            
+            # 캐시 무효화
+            self._get_cached_status_counts.cache_clear()
+            self._get_cached_candidate_list.cache_clear()
+            
+            logger.info(f"Batch saved {saved_count}/{len(candidates_data)} candidates")
+            return saved_count
+            
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except:
+                pass
+            logger.error(f"Failed to batch save candidates: {e}")
+            return 0
+    
+    def update_status_batch(self, status_updates: List[Dict[str, Any]]) -> int:
+        """
+        상태 배치 업데이트
+        
+        Args:
+            status_updates: [{"candidate_id": str, "new_status": str, "reason": str}, ...]
+            
+        Returns:
+            성공적으로 업데이트된 개수
+        """
+        if not status_updates:
+            return 0
+            
+        updated_count = 0
+        try:
+            conn = self._get_connection()
+            conn.execute("BEGIN IMMEDIATE")
+            
+            for update in status_updates:
+                try:
+                    candidate_id = update.get("candidate_id")
+                    new_status = update.get("new_status")
+                    reason = update.get("reason", "")
+                    operator_id = update.get("operator_id", "system")
+                    
+                    if not candidate_id or not new_status:
+                        continue
+                    
+                    # 현재 상태 조회
+                    cursor = conn.execute("""
+                        SELECT status_info FROM candidates WHERE id = ?
+                    """, (candidate_id,))
+                    
+                    row = cursor.fetchone()
+                    if not row:
+                        continue
+                        
+                    current_status_info = json.loads(row[0])
+                    old_status = current_status_info.get("current_status", "unknown")
+                    
+                    # 상태 정보 업데이트
+                    current_status_info["current_status"] = new_status
+                    current_status_info["updated_at"] = datetime.now().isoformat()
+                    current_status_info["updated_by"] = operator_id
+                    current_status_info["last_reason"] = reason
+                    
+                    # 후보 데이터 업데이트
+                    conn.execute("""
+                        UPDATE candidates 
+                        SET status_info = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (
+                        json.dumps(current_status_info, ensure_ascii=False),
+                        datetime.now().isoformat(),
+                        candidate_id
+                    ))
+                    
+                    # 상태 변경 이력 기록
+                    conn.execute("""
+                        INSERT INTO status_history (candidate_id, from_status, to_status, reason, operator_id, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        candidate_id,
+                        old_status,
+                        new_status,
+                        reason,
+                        operator_id,
+                        json.dumps({
+                            "timestamp": datetime.now().isoformat(),
+                            "batch_update": True
+                        }, ensure_ascii=False)
+                    ))
+                    
+                    updated_count += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to update individual status: {e}")
+                    continue
+                    
+            conn.execute("COMMIT")
+            
+            # 캐시 무효화
+            self._get_cached_status_counts.cache_clear()
+            self._get_cached_candidate_list.cache_clear()
+            
+            logger.info(f"Batch updated {updated_count}/{len(status_updates)} statuses")
+            return updated_count
+            
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except:
+                pass
+            logger.error(f"Failed to batch update statuses: {e}")
+            return 0
+    
+    def cleanup_old_data(self, days_to_keep: int = 30) -> Dict[str, int]:
+        """
+        오래된 데이터 정리 (성능 유지)
+        
+        Args:
+            days_to_keep: 보관할 일수
+            
+        Returns:
+            정리된 레코드 수
+        """
+        cleaned = {"audit_logs": 0, "status_history": 0, "search_history": 0}
+        
+        try:
+            conn = self._get_connection()
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 오래된 감사 로그 정리
+            cursor = conn.execute("""
+                DELETE FROM audit_logs 
+                WHERE created_at < ?
+            """, (cutoff_str,))
+            cleaned["audit_logs"] = cursor.rowcount
+            
+            # 오래된 상태 이력 정리 (최근 5개는 보존)
+            cursor = conn.execute("""
+                DELETE FROM status_history 
+                WHERE timestamp < ? AND id NOT IN (
+                    SELECT id FROM status_history 
+                    WHERE candidate_id = status_history.candidate_id 
+                    ORDER BY timestamp DESC 
+                    LIMIT 5
+                )
+            """, (cutoff_str,))
+            cleaned["status_history"] = cursor.rowcount
+            
+            # 오래된 검색 이력 정리
+            cursor = conn.execute("""
+                DELETE FROM search_history 
+                WHERE timestamp < ?
+            """, (cutoff_str,))
+            cleaned["search_history"] = cursor.rowcount
+            
+            conn.commit()
+            
+            # 데이터베이스 최적화
+            conn.execute("VACUUM")
+            conn.execute("ANALYZE")
+            
+            logger.info(f"Cleaned old data: {cleaned}")
+            return cleaned
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup old data: {e}")
+            return cleaned
+    
+    def get_database_stats(self) -> Dict[str, Any]:
+        """데이터베이스 통계 및 성능 지표"""
+        try:
+            conn = self._get_connection()
+            stats = {}
+            
+            # 테이블별 레코드 수
+            tables = ['candidates', 'status_history', 'audit_logs', 'search_history', 'search_feedback']
+            for table in tables:
+                cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                stats[f"{table}_count"] = cursor.fetchone()[0]
+            
+            # 데이터베이스 파일 크기
+            db_path = Path(self.db_path)
+            if db_path.exists():
+                stats["db_size_mb"] = db_path.stat().st_size / (1024 * 1024)
+            
+            # WAL 파일 크기
+            wal_path = Path(f"{self.db_path}-wal")
+            if wal_path.exists():
+                stats["wal_size_mb"] = wal_path.stat().st_size / (1024 * 1024)
+            
+            # 인덱스 사용 통계
+            cursor = conn.execute("""
+                SELECT name, tbl_name FROM sqlite_master 
+                WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+            """)
+            stats["index_count"] = len(cursor.fetchall())
+            
+            # 캐시 히트율 추정
+            stats["cache_info"] = {
+                "status_counts_cache": self._get_cached_status_counts.cache_info()._asdict(),
+                "candidate_list_cache": self._get_cached_candidate_list.cache_info()._asdict()
+            }
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Failed to get database stats: {e}")
+            return {}
+    
     def close(self):
         """데이터베이스 연결 정리"""
+        with self._pool_lock:
+            for conn in self._connection_pool.values():
+                try:
+                    conn.close()
+                except:
+                    pass
+            self._connection_pool.clear()
         logger.info("Database manager closed")
 
 
