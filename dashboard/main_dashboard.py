@@ -9,28 +9,103 @@ from pathlib import Path
 import pandas as pd
 from datetime import datetime
 
-# 프로젝트 루트 경로 추가
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# 중앙화된 경로 관리 시스템 사용
+try:
+    from config.path_config import get_path_manager
+    pm = get_path_manager()
+except ImportError:
+    # fallback
+    dashboard_root = Path(__file__).parent
+    project_root = dashboard_root.parent
+    sys.path.insert(0, str(project_root))
+    sys.path.insert(0, str(dashboard_root))
+    from config.path_config import get_path_manager
+    pm = get_path_manager()
 
 # 페이지 모듈 및 데이터베이스 import
+modules = {
+    'render_monetizable_candidates': None,
+    'render_filtered_products': None,
+    'render_channel_discovery': None,
+    'render_channel_discovery_results': None,
+    'render_video_collection': None,
+    'render_google_sheets_management': None,
+    'get_database_manager': None
+}
+
+import_success = True
+import_errors = []
+
+# 안전한 import 시도
 try:
-    from dashboard.views.monetizable_candidates import render_monetizable_candidates
-    from dashboard.views.filtered_products import render_filtered_products
-    from dashboard.views.channel_discovery import render_channel_discovery
-    from dashboard.views.channel_discovery_results import render_channel_discovery_results
-    from dashboard.views.video_collection import render_video_collection
-    from dashboard.views.google_sheets_management import render_google_sheets_management
-    from dashboard.utils.database_manager import get_database_manager
+    from views.monetizable_candidates import render_monetizable_candidates
+    modules['render_monetizable_candidates'] = render_monetizable_candidates
 except ImportError as e:
-    print(f"Import error: {e}")
-    render_monetizable_candidates = None
-    render_filtered_products = None
-    render_channel_discovery = None
-    render_channel_discovery_results = None
-    render_video_collection = None
-    render_google_sheets_management = None
-    get_database_manager = None
+    import_errors.append(f"monetizable_candidates: {e}")
+    import_success = False
+
+try:
+    from views.filtered_products import render_filtered_products
+    modules['render_filtered_products'] = render_filtered_products
+except ImportError as e:
+    import_errors.append(f"filtered_products: {e}")
+    import_success = False
+
+try:
+    from views.channel_discovery import render_channel_discovery
+    modules['render_channel_discovery'] = render_channel_discovery
+except ImportError as e:
+    import_errors.append(f"channel_discovery: {e}")
+    import_success = False
+
+try:
+    from views.channel_discovery_results import render_channel_discovery_results
+    modules['render_channel_discovery_results'] = render_channel_discovery_results
+except ImportError as e:
+    import_errors.append(f"channel_discovery_results: {e}")
+    import_success = False
+
+try:
+    from views.video_collection import render_video_collection
+    modules['render_video_collection'] = render_video_collection
+except ImportError as e:
+    import_errors.append(f"video_collection: {e}")
+    import_success = False
+
+try:
+    from views.google_sheets_management import render_google_sheets_management
+    modules['render_google_sheets_management'] = render_google_sheets_management
+except ImportError as e:
+    import_errors.append(f"google_sheets_management: {e}")
+    import_success = False
+
+try:
+    from utils.database_manager import get_database_manager
+    modules['get_database_manager'] = get_database_manager
+except ImportError as e:
+    import_errors.append(f"database_manager: {e}")
+    import_success = False
+
+# import 결과 표시
+if import_success:
+    st.success("✅ 모든 모듈이 성공적으로 로드되었습니다.")
+else:
+    with st.expander("⚠️ 모듈 import 상태", expanded=False):
+        st.warning(f"일부 모듈 import에 실패했습니다 ({len(import_errors)}개)")
+        for error in import_errors:
+            st.error(f"  • {error}")
+        
+        # 로그 파일 위치 안내
+        st.info(f"상세 로그: {pm.logs_dir}")
+
+# 함수들을 전역으로 설정 (기존 코드 호환성)
+render_monetizable_candidates = modules['render_monetizable_candidates']
+render_filtered_products = modules['render_filtered_products']
+render_channel_discovery = modules['render_channel_discovery']
+render_channel_discovery_results = modules['render_channel_discovery_results']
+render_video_collection = modules['render_video_collection']
+render_google_sheets_management = modules['render_google_sheets_management']
+get_database_manager = modules['get_database_manager']
 
 # 페이지 설정
 st.set_page_config(
@@ -145,6 +220,7 @@ def main():
                 st.metric("시스템 상태", "⚠️ 연결 필요", "데이터베이스", help="데이터베이스 연결 필요")
     else:
         st.error("데이터베이스 모듈을 가져올 수 없습니다.")
+        st.info("데이터베이스 모듈이 정상적으로 import되지 않았습니다. 위의 import 오류를 확인해주세요.")
     
     st.markdown("---")
     
