@@ -4,15 +4,23 @@ import pandas as pd
 import sys
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # 프로젝트 root 경로 추가
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+dashboard_root = Path(__file__).parent.parent  # dashboard 폴더
+project_root = dashboard_root.parent           # influence_item 폴더
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(dashboard_root))
 
 try:
-    from src.youtube_api import YouTubeAPIManager
-    from dashboard.utils.database_manager import DatabaseManager
+    from utils.database_manager import DatabaseManager
+    # YouTube API 관련 기능은 향후 구현 예정
+    YouTubeAPIManager = None
+    st.info("YouTube API 기능은 개발 중입니다.")
 except ImportError as e:
     st.error(f"모듈 import 실패: {e}")
+    YouTubeAPIManager = None
+    DatabaseManager = None
 
 def render_channel_discovery():
     st.header("🔍 신규 채널 탐색")

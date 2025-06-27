@@ -16,16 +16,14 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from src.workflow.state_router import StateRouter, CandidateStatus, StateTransition
-    from src.workflow.audit_logger import AuditLogger, LogCategory, LogLevel
-except ImportError:
-    StateRouter = None
-    CandidateStatus = None
-    StateTransition = None
-    AuditLogger = None
-    LogCategory = None
-    LogLevel = None
+# 워크플로우 상태 관리는 현재 데이터베이스 기반으로 구현됨
+# src.workflow 모듈은 향후 확장 시 구현 예정
+StateRouter = None
+CandidateStatus = None
+StateTransition = None
+AuditLogger = None
+LogCategory = None
+LogLevel = None
 
 logger = logging.getLogger(__name__)
 
