@@ -18,7 +18,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 알림 데이터 처리\nconst notification = $json;\n\n// 기본값 설정\nconst title = notification.title || '알림';\nconst message = notification.message || '';\nconst type = notification.type || 'info';\nconst priority = notification.priority || 'medium';\n\n// 타입별 이모지\nconst emojis = {\n  'success': '✅',\n  'error': '❌',\n  'warning': '⚠️',\n  'info': 'ℹ️',\n  'analysis_complete': '🎯',\n  'new_candidate': '🌟',\n  'high_score': '🏆'\n};\n\nconst emoji = emojis[type] || '📢';\n\n// Slack 메시지 구성\nconst slackMessage = {\n  text: `${emoji} ${title}`,\n  message: message,\n  timestamp: new Date().toISOString(),\n  metadata: notification.metadata || {}\n};\n\nreturn [{ json: slackMessage }];"
+        "jsCode": "// 알림 데이터 처리\nconst notification = $json;\n\n// 기본값 설정\nconst title = notification.title || '알림';\nconst message = notification.message || '';\nconst type = notification.type || 'info';\n\n// 타입별 이모지\nconst emojis = {\n  'success': '✅',\n  'error': '❌',\n  'warning': '⚠️',\n  'info': 'ℹ️',\n  'analysis_complete': '🎯',\n  'new_candidate': '🌟',\n  'high_score': '🏆'\n};\n\nconst emoji = emojis[type] || '📢';\n\n// Slack 메시지 구성 (단순화)\nconst slackMessage = {\n  emoji: emoji,\n  title: title,\n  message: message,\n  fullText: `${emoji} ${title}\\n\\n${message}`,\n  timestamp: new Date().toISOString(),\n  metadata: notification.metadata || {}\n};\n\nreturn [{ json: slackMessage }];"
       },
       "id": "format-message",
       "name": "Format Slack Message",
@@ -29,7 +29,7 @@
     {
       "parameters": {
         "channel": "{{ $env.SLACK_CHANNEL }}",
-        "text": "{{ $json.text }}\n\n{{ $json.message }}",
+        "text": "{{ $json.fullText }}",
         "otherOptions": {}
       },
       "id": "send-slack",

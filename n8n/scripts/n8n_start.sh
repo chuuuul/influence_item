@@ -11,6 +11,9 @@ fi
 # n8n 데이터 디렉토리 설정 (상위 디렉토리로 설정하여 .n8n이 생성되도록)
 export N8N_USER_FOLDER=/Users/chul
 
+# 환경변수 접근 허용 (중요!)
+export N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+
 # 중복 설정 파일 방지
 unset N8N_CONFIG_FILE
 unset N8N_CONFIG_FILES
