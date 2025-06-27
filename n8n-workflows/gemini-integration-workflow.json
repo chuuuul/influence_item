@@ -1,0 +1,313 @@
+{
+  "name": "Gemini API Integration Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gemini-analysis",
+        "options": {
+          "noResponseBody": false
+        }
+      },
+      "id": "gemini-webhook",
+      "name": "Gemini Analysis Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [300, 300],
+      "webhookId": "gemini-analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemini API 요청 데이터 준비\nconst input = $json;\n\n// 필수 파라미터 검증\nif (!input.text && !input.transcript) {\n  throw new Error('분석할 텍스트 또는 트랜스크립트가 필요합니다');\n}\n\n// 분석할 텍스트 준비\nconst analysisText = input.text || input.transcript;\nconst analysisType = input.analysis_type || 'product_detection';\n\n// Gemini API 프롬프트 설정\nlet prompt = '';\n\nswitch (analysisType) {\n  case 'product_detection':\n    prompt = `다음 텍스트에서 제품, 브랜드, 또는 PPL 관련 내용을 분석하세요:\n\n${analysisText}\n\n다음 JSON 형식으로 응답해주세요:\n{\n  \"products\": [\n    {\n      \"product_name\": \"제품명\",\n      \"brand\": \"브랜드명\",\n      \"category\": \"카테고리\",\n      \"confidence\": 0.95,\n      \"context\": \"언급된 맥락\",\n      \"sentiment\": \"positive/neutral/negative\",\n      \"is_sponsored\": true/false\n    }\n  ],\n  \"summary\": \"전체 분석 요약\",\n  \"monetization_potential\": {\n    \"score\": 85,\n    \"reasons\": [\"긍정적 언급\", \"자연스러운 추천\"]\n  }\n}`;\n    break;\n    \n  case 'sentiment_analysis':\n    prompt = `다음 텍스트의 감정과 톤을 분석하세요:\n\n${analysisText}\n\nJSON 형식으로 응답:\n{\n  \"overall_sentiment\": \"positive/neutral/negative\",\n  \"sentiment_score\": 0.85,\n  \"emotions\": [\"excitement\", \"enthusiasm\"],\n  \"tone\": \"casual/formal/promotional\",\n  \"key_phrases\": [\"핵심 구문들\"],\n  \"analysis\": \"상세 분석 내용\"\n}`;\n    break;\n    \n  case 'content_summary':\n    prompt = `다음 콘텐츠를 요약하고 핵심 내용을 추출하세요:\n\n${analysisText}\n\nJSON 형식으로 응답:\n{\n  \"summary\": \"내용 요약\",\n  \"key_topics\": [\"주요 주제들\"],\n  \"timestamps\": [],\n  \"highlights\": [\"하이라이트 내용\"],\n  \"content_type\": \"리뷰/언박싱/일상/기타\"\n}`;\n    break;\n    \n  default:\n    prompt = `다음 텍스트를 분석하세요:\n\n${analysisText}`;\n}\n\n// Gemini API 요청 데이터 구성\nconst geminiRequest = {\n  contents: [{\n    parts: [{\n      text: prompt\n    }]\n  }],\n  generationConfig: {\n    temperature: 0.1,\n    topK: 40,\n    topP: 0.95,\n    maxOutputTokens: 2048,\n  },\n  safetySettings: [\n    {\n      category: \"HARM_CATEGORY_HARASSMENT\",\n      threshold: \"BLOCK_MEDIUM_AND_ABOVE\"\n    },\n    {\n      category: \"HARM_CATEGORY_HATE_SPEECH\",\n      threshold: \"BLOCK_MEDIUM_AND_ABOVE\"\n    },\n    {\n      category: \"HARM_CATEGORY_SEXUALLY_EXPLICIT\",\n      threshold: \"BLOCK_MEDIUM_AND_ABOVE\"\n    },\n    {\n      category: \"HARM_CATEGORY_DANGEROUS_CONTENT\",\n      threshold: \"BLOCK_MEDIUM_AND_ABOVE\"\n    }\n  ]\n};\n\nreturn [{\n  json: {\n    ...geminiRequest,\n    analysisType: analysisType,\n    originalInput: input,\n    requestTime: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "prepare-gemini-request",
+      "name": "Prepare Gemini Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "={{ JSON.stringify($json.contents) }}"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={{ JSON.stringify($json.generationConfig) }}"
+            },
+            {
+              "name": "safetySettings",
+              "value": "={{ JSON.stringify($json.safetySettings) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "call-gemini-api",
+      "name": "Call Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemini API 응답 파싱 및 정리\nconst response = $json;\nconst requestData = $('Prepare Gemini Request').item.json;\n\n// API 에러 체크\nif (response.error) {\n  throw new Error(`Gemini API 에러: ${response.error.message}`);\n}\n\n// 응답 데이터 추출\nconst candidates = response.candidates || [];\nif (candidates.length === 0) {\n  throw new Error('Gemini API에서 응답을 받지 못했습니다');\n}\n\nconst content = candidates[0].content;\nconst generatedText = content.parts[0].text;\n\n// JSON 응답 파싱 시도\nlet parsedResult = null;\ntry {\n  // JSON 부분만 추출 (마크다운 코드 블록 제거)\n  const jsonMatch = generatedText.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/) || \n                   generatedText.match(/{[\\s\\S]*}/);\n  \n  if (jsonMatch) {\n    parsedResult = JSON.parse(jsonMatch[1] || jsonMatch[0]);\n  } else {\n    // JSON 형식이 아닌 경우 텍스트 그대로 사용\n    parsedResult = { text: generatedText };\n  }\n} catch (e) {\n  console.warn('JSON 파싱 실패, 원본 텍스트 사용:', e.message);\n  parsedResult = { text: generatedText, parse_error: e.message };\n}\n\n// 최종 결과 구성\nconst result = {\n  analysis_type: requestData.analysisType,\n  gemini_response: parsedResult,\n  raw_text: generatedText,\n  finish_reason: candidates[0].finishReason,\n  safety_ratings: candidates[0].safetyRatings,\n  usage_metadata: response.usageMetadata,\n  request_time: requestData.requestTime,\n  response_time: new Date().toISOString(),\n  success: true\n};\n\nconsole.log('Gemini 분석 완료:', result.analysis_type);\n\nreturn [{ json: result }];"
+      },
+      "id": "process-gemini-response",
+      "name": "Process Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-product-detection",
+              "leftValue": "={{ $json.analysis_type }}",
+              "rightValue": "product_detection",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-analysis-type",
+      "name": "Check Analysis Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 제품 탐지 결과를 데이터베이스 형식으로 변환\nconst analysisResult = $json;\nconst products = analysisResult.gemini_response.products || [];\nconst monetization = analysisResult.gemini_response.monetization_potential || {};\n\n// 각 제품에 대한 후보 데이터 생성\nconst candidates = products.map((product, index) => {\n  return {\n    id: `candidate_${Date.now()}_${index}`,\n    source_info: {\n      video_id: analysisResult.originalInput?.video_id || 'unknown',\n      video_url: analysisResult.originalInput?.video_url || '',\n      celebrity_name: analysisResult.originalInput?.celebrity_name || 'Unknown',\n      video_title: analysisResult.originalInput?.video_title || '',\n      analysis_timestamp: analysisResult.response_time\n    },\n    candidate_info: {\n      product_name_ai: product.product_name,\n      brand_name: product.brand,\n      category: product.category,\n      confidence_score: product.confidence,\n      context: product.context,\n      sentiment: product.sentiment,\n      is_sponsored: product.is_sponsored,\n      monetization_score: monetization.score || 0,\n      hook_sentence: `${product.brand} ${product.product_name}으로 ${product.context}`\n    },\n    status_info: {\n      current_status: 'needs_review',\n      ai_recommendation: monetization.score > 70 ? 'approve' : 'review',\n      confidence: product.confidence\n    },\n    gemini_analysis: {\n      raw_response: analysisResult.gemini_response,\n      finish_reason: analysisResult.finish_reason,\n      usage_metadata: analysisResult.usage_metadata\n    },\n    created_at: new Date().toISOString()\n  };\n});\n\nconsole.log(`제품 탐지 완료: ${candidates.length}개 후보 생성`);\n\nreturn candidates.map(candidate => ({ json: candidate }));"
+      },
+      "id": "format-product-candidates",
+      "name": "Format Product Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.PYTHON_ANALYSIS_ENDPOINT }}/candidates/save",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.ANALYSIS_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "candidate",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "save-to-database",
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "{{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Analysis Results",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Analysis Type": "={{ $json.analysis_type }}",
+            "Response Time": "={{ $json.response_time }}",
+            "Success": "={{ $json.success }}",
+            "Token Usage": "={{ $json.usage_metadata ? JSON.stringify($json.usage_metadata) : 'N/A' }}",
+            "Summary": "={{ $json.gemini_response.summary || $json.gemini_response.text || 'No summary' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-to-sheets",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1300, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 에러 처리 및 로깅\nconst error = $json;\nconst requestData = $('Prepare Gemini Request').item.json;\n\nconsole.error('Gemini API 호출 실패:', error);\n\n// 에러 정보 구성\nconst errorInfo = {\n  error: true,\n  error_message: error.message || '알 수 없는 오류',\n  error_type: 'gemini_api_error',\n  request_data: requestData,\n  timestamp: new Date().toISOString(),\n  analysis_type: requestData.analysisType || 'unknown'\n};\n\nreturn [{ json: errorInfo }];"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "❌ Gemini API 분석 실패\\n\\n💥 에러: {{ $json.error_message }}\\n📊 분석 타입: {{ $json.analysis_type }}\\n⏰ 시간: {{ $json.timestamp }}\\n\\n🔧 운영자 확인이 필요합니다.",
+        "otherOptions": {}
+      },
+      "id": "notify-error",
+      "name": "Notify Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1100, 500]
+    }
+  ],
+  "connections": {
+    "Gemini Analysis Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Gemini Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini Request": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Gemini API": {
+      "main": [
+        [
+          {
+            "node": "Process Gemini Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Gemini Response": {
+      "main": [
+        [
+          {
+            "node": "Check Analysis Type",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Analysis Type": {
+      "main": [
+        [
+          {
+            "node": "Format Product Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Format Product Candidates": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Error": {
+      "main": [
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-06-26T01:00:00.000Z",
+  "updatedAt": "2025-06-26T01:00:00.000Z",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "tags": ["gemini", "ai-analysis", "product-detection", "google-sheets"]
+}

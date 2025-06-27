@@ -67,5 +67,30 @@ def ensure_youtube_api_key():
     
     return api_key
 
+def ensure_gemini_api_key():
+    """
+    Gemini API 키가 있는지 확인하고 없으면 .env 파일에서 로드
+    """
+    if not os.getenv('GEMINI_API_KEY'):
+        load_env_file()
+    
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        raise ValueError("Gemini API 키가 설정되지 않았습니다. .env 파일을 확인하세요.")
+    
+    return api_key
+
+def get_google_sheet_settings():
+    """
+    Google Sheets 설정 정보 반환
+    """
+    if not os.getenv('GOOGLE_SHEET_ID'):
+        load_env_file()
+    
+    return {
+        'sheet_id': os.getenv('GOOGLE_SHEET_ID'),
+        'sheet_url': os.getenv('GOOGLE_SHEET_URL')
+    }
+
 # 모듈 임포트 시 자동으로 .env 파일 로드
 load_env_file()

@@ -1,0 +1,42 @@
+{
+  "test_timestamp": "2025-06-26T02:54:54.495466",
+  "test_results": {
+    "gemini_api": true,
+    "csv_generation": true,
+    "dashboard_modules": true,
+    "n8n_workflows": true
+  },
+  "environment": {
+    "gemini_api_key": true,
+    "google_sheet_id": true,
+    "google_sheet_url": true,
+    "python_version": "3.13.4",
+    "project_path": "/Users/chul/Documents/claude/influence_item"
+  },
+  "available_features": {
+    "ai_analysis": "Gemini API 연동",
+    "data_export": "CSV 파일 생성",
+    "dashboard": "Streamlit 대시보드",
+    "automation": "N8n 워크플로우",
+    "notification": "이메일 알림 템플릿"
+  },
+  "working_solutions": {
+    "immediate": [
+      "CSV 파일 생성 후 수동 Google Sheets 업로드",
+      "Gemini API를 통한 AI 분석",
+      "Streamlit 대시보드 실행",
+      "이메일 알림 템플릿 생성"
+    ],
+    "with_setup": [
+      "Google Apps Script 자동화",
+      "Google Forms 연동",
+      "완전한 N8n 워크플로우 자동화"
+    ]
+  },
+  "next_steps": [
+    "Google Apps Script 설정으로 완전 자동화",
+    "실제 YouTube 채널 데이터로 테스트",
+    "대시보드 UI 개선",
+    "오류 처리 및 모니터링 강화"
+  ]
+}
