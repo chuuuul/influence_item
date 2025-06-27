@@ -1,6 +1,10 @@
 """
-데이터베이스 관리 유틸리티
-T08_S01_M02: Workflow State Management - Database Operations
+데이터베이스 관리 유틸리티 - PRD v1.0 구현
+
+리뷰어 지적사항 해결:
+- 중앙화된 경로 관리 시스템 활용
+- 안정적인 데이터베이스 연결
+- 성능 최적화된 쿼리 및 캐싱
 
 후보 데이터의 CRUD 작업 및 상태 관리를 위한 데이터베이스 연동
 """
@@ -14,27 +18,46 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
 from functools import lru_cache
-import sys
 
-# 프로젝트 루트 경로 추가
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# 중앙화된 경로 관리 시스템 import
+try:
+    from config.path_config import get_path_manager
+    pm = get_path_manager()
+except ImportError:
+    # fallback
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent))
+    from config.path_config import get_path_manager
+    pm = get_path_manager()
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """데이터베이스 관리자 (성능 최적화)"""
+    """데이터베이스 관리자 (성능 최적화) - PRD v1.0 구현"""
     
-    def __init__(self, db_path: str = "influence_item.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """
         Args:
-            db_path: SQLite 데이터베이스 파일 경로
+            db_path: SQLite 데이터베이스 파일 경로 (None이면 중앙화된 경로 사용)
         """
-        self.db_path = db_path
+        # 중앙화된 경로 관리 시스템 활용
+        if db_path is None:
+            self.db_path = str(pm.database_file)
+        else:
+            self.db_path = db_path
+        
         self._connection_pool = {}
         self._pool_lock = threading.Lock()
         self._cache_timeout = 300  # 5분 캐시
+        
+        # 로그 설정
+        self.logger = pm.logger if hasattr(pm, 'logger') else logger
+        
+        # 데이터베이스 디렉토리 확인 및 생성
+        db_dir = Path(self.db_path).parent
+        pm.ensure_directory_exists(db_dir)
+        
         self._init_database()
         
     def _init_database(self):
