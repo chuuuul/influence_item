@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 import logging
 import streamlit as st
+from google.oauth2.service_account import Credentials
 
 logger = logging.getLogger(__name__)
 
@@ -18,24 +19,36 @@ class GoogleSheetsOAuthClient:
         self.client = None
         self.sheet = None
         self.worksheet = None
-        self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
+        # 환경변수가 없을 경우 기본값 사용
+        self.sheet_id = os.getenv('GOOGLE_SHEET_ID', '1hPkWFJ_FJ6YTwAIOpEbkHhs6bEAFIx2AuWfKaEA7LTY')
         self.sheet_url = os.getenv('GOOGLE_SHEET_URL')
         
     def authenticate(self):
         """
-        OAuth 인증을 사용하여 Google Sheets API에 연결
+        서비스 계정 인증을 사용하여 Google Sheets API에 연결
         """
         try:
-            # OAuth 인증 (첫 번째 실행 시 브라우저가 열림)
-            self.client = gspread.oauth()
-            logger.info("Google Sheets OAuth 인증 성공")
+            # 서비스 계정 인증 파일 경로
+            cred_path = "/Users/chul/.config/gspread/credentials.json"
+            
+            # 필요한 스코프 설정
+            scope = [
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive'
+            ]
+            
+            # 서비스 계정 인증
+            credentials = Credentials.from_service_account_file(cred_path, scopes=scope)
+            self.client = gspread.authorize(credentials)
+            
+            logger.info("Google Sheets 서비스 계정 인증 성공")
             return True
             
         except Exception as e:
-            logger.error(f"Google Sheets OAuth 인증 실패: {e}")
+            logger.error(f"Google Sheets 인증 실패: {e}")
             return False
     
-    def connect_to_sheet(self, worksheet_name='Sheet1'):
+    def connect_to_sheet(self, worksheet_name='시트1'):
         """
         Google Sheets에 연결
         """
@@ -47,13 +60,13 @@ class GoogleSheetsOAuthClient:
             # 시트 열기
             self.sheet = self.client.open_by_key(self.sheet_id)
             
-            # 워크시트 선택 또는 생성
+            # 워크시트 선택
             try:
                 self.worksheet = self.sheet.worksheet(worksheet_name)
             except gspread.WorksheetNotFound:
-                # 워크시트가 없으면 생성
-                self.worksheet = self.sheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
-                logger.info(f"새 워크시트 생성: {worksheet_name}")
+                # 워크시트가 없으면 첫 번째 워크시트 사용
+                self.worksheet = self.sheet.sheet1
+                logger.info(f"워크시트 '{worksheet_name}' 없음, 첫 번째 워크시트 사용: {self.worksheet.title}")
             
             logger.info(f"Google Sheets 연결 성공: {self.sheet.title}")
             return True
@@ -267,12 +280,22 @@ class GoogleSheetsOAuthClient:
                     return False, "시트 연결 실패"
             
             # 시트 정보 가져오기
+            try:
+                last_update = self.sheet.get_lastUpdateTime()
+                # last_update가 이미 문자열인 경우 그대로 사용
+                if isinstance(last_update, str):
+                    last_update_str = last_update
+                else:
+                    last_update_str = last_update.strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                last_update_str = "알 수 없음"
+                
             sheet_info = {
                 'title': self.sheet.title,
                 'sheet_id': self.sheet.id,
                 'url': self.sheet.url,
                 'worksheet_count': len(self.sheet.worksheets()),
-                'last_update': self.sheet.get_lastUpdateTime().strftime('%Y-%m-%d %H:%M:%S')
+                'last_update': last_update_str
             }
             
             return True, sheet_info

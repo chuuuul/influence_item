@@ -5,11 +5,13 @@ import sys
 from pathlib import Path
 
 # 프로젝트 루트 경로 추가
-project_root = Path(__file__).parent.parent.parent
+dashboard_root = Path(__file__).parent.parent  # dashboard 폴더
+project_root = dashboard_root.parent           # influence_item 폴더
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(dashboard_root))
 
 try:
-    from dashboard.utils.database_manager import get_database_manager
+    from utils.database_manager import get_database_manager
 except ImportError:
     get_database_manager = None
 
