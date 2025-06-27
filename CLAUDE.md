@@ -9,3 +9,33 @@
 - 테스트 실패가 설정 문제라면 그냥 넘어가지 말고 설정의 문제를 파악하고 해결 할 것. 테스트환경도 적극 해결할 것.
 - context7을 통해 n8n에 관한 문서를 꼭 읽을 것
 - 기술을 사용 할 때 context7을 적극 활욜 할 것
+
+# Google Sheets 연동 설정 (2025-06-27 완료)
+
+## 🔧 완료된 설정
+- ✅ Google Cloud Console: Sheets API 활성화 완료
+- ✅ 서비스 계정: influence-item-sheets@influence-item-youtube.iam.gserviceaccount.com
+- ✅ 인증 파일: /Users/chul/.config/gspread/credentials.json
+- ✅ 시트 ID: 1hPkWFJ_FJ6YTwAIOpEbkHhs6bEAFIx2AuWfKaEA7LTY
+- ✅ OAuth 연동: 완전 작동 확인
+
+## 📋 빠른 테스트 명령어
+```bash
+# 빠른 연결 테스트
+python3 quick_test.py
+
+# 전체 통합 테스트
+python3 test_dashboard_integration.py
+
+# 대시보드 실행
+python3 -m streamlit run dashboard/main_dashboard.py --server.port 8504
+```
+
+## 🚨 중요 파일들
+- 인증키: /Users/chul/.config/gspread/credentials.json (절대 삭제하지 말 것)
+- 환경설정: .env (Google Sheets 설정 포함)
+- 설정가이드: GOOGLE_SHEETS_SETUP.md
+- 구현 모듈들: dashboard/utils/google_sheets_*.py
+
+---
+**Google Sheets 완전 연동 완료 - 다음에도 바로 사용 가능**

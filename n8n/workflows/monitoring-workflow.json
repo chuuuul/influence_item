@@ -1,0 +1,383 @@
+{
+  "name": "System Monitoring and Health Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "cronExpression": "*/30 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "monitoring-trigger",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 시스템 상태 체크 초기화\nconst checkTime = new Date().toISOString();\nconst staticData = $getWorkflowStaticData('global');\n\n// 모니터링 데이터 초기화\nif (!staticData.monitoring) {\n  staticData.monitoring = {\n    lastHealthCheck: null,\n    uptime: {\n      startTime: checkTime,\n      totalChecks: 0,\n      successfulChecks: 0\n    },\n    performance: {\n      avgResponseTime: 0,\n      maxResponseTime: 0,\n      minResponseTime: Infinity\n    },\n    alerts: []\n  };\n}\n\nstaticData.monitoring.uptime.totalChecks++;\nstaticData.monitoring.lastHealthCheck = checkTime;\n\nconst monitoringData = {\n  checkTime: checkTime,\n  checkId: `health_${Date.now()}`,\n  services: [\n    {\n      name: 'python_analysis_api',\n      url: `${process.env.PYTHON_ANALYSIS_ENDPOINT}/health`,\n      expected_status: 200,\n      timeout: 10000\n    },\n    {\n      name: 'google_sheets_api',\n      url: 'https://sheets.googleapis.com',\n      expected_status: 200,\n      timeout: 5000\n    }\n  ]\n};\n\nconsole.log(`시스템 헬스체크 시작: ${checkTime}`);\n\nreturn [{ json: monitoringData }];"
+      },
+      "id": "init-health-check",
+      "name": "Initialize Health Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-services",
+      "name": "Loop Over Services",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": "={{ $json.timeout }}",
+          "followRedirect": false,
+          "ignoreHttpStatusErrors": true
+        }
+      },
+      "id": "check-service",
+      "name": "Check Service Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 서비스 상태 분석\nconst serviceInfo = $('Loop Over Services').item.json;\nconst response = $json;\nconst checkTime = new Date().toISOString();\n\n// 응답 시간 측정\nconst responseTime = response.headers?.['x-response-time'] || 'unknown';\nconst statusCode = response.statusCode || 0;\n\n// 서비스 상태 판단\nconst isHealthy = statusCode === serviceInfo.expected_status;\nconst status = isHealthy ? 'healthy' : 'unhealthy';\n\n// 서비스 체크 결과\nconst serviceResult = {\n  serviceName: serviceInfo.name,\n  url: serviceInfo.url,\n  status: status,\n  statusCode: statusCode,\n  responseTime: responseTime,\n  checkTime: checkTime,\n  isHealthy: isHealthy,\n  errorMessage: isHealthy ? null : `Expected ${serviceInfo.expected_status}, got ${statusCode}`\n};\n\n// 정적 데이터 업데이트\nconst staticData = $getWorkflowStaticData('global');\nif (isHealthy) {\n  staticData.monitoring.uptime.successfulChecks++;\n}\n\n// 알림이 필요한 경우\nif (!isHealthy) {\n  const alert = {\n    serviceName: serviceInfo.name,\n    status: 'down',\n    timestamp: checkTime,\n    details: serviceResult.errorMessage\n  };\n  \n  staticData.monitoring.alerts.push(alert);\n  \n  // 최근 10개 알림만 유지\n  if (staticData.monitoring.alerts.length > 10) {\n    staticData.monitoring.alerts = staticData.monitoring.alerts.slice(-10);\n  }\n}\n\nconsole.log(`${serviceInfo.name} 상태: ${status}`);\n\nreturn [{ json: serviceResult }];"
+      },
+      "id": "analyze-service-status",
+      "name": "Analyze Service Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-unhealthy",
+              "leftValue": "={{ $json.isHealthy }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-unhealthy",
+      "name": "Is Unhealthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "🔴 서비스 상태 알림\\n\\n⚠️ 서비스: {{ $json.serviceName }}\\n📊 상태: {{ $json.status }}\\n🔗 URL: {{ $json.url }}\\n📈 상태 코드: {{ $json.statusCode }}\\n⏰ 체크 시간: {{ $json.checkTime }}\\n\\n{{ $json.errorMessage ? '❌  에러: ' + $json.errorMessage : '' }}",
+        "otherOptions": {}
+      },
+      "id": "alert-unhealthy-service",
+      "name": "Alert Unhealthy Service",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 모든 서비스 체크 완료 후 종합 리포트 생성\nconst allResults = $input.all();\nconst checkTime = new Date().toISOString();\nconst staticData = $getWorkflowStaticData('global');\n\n// 서비스별 상태 집계\nconst healthyServices = allResults.filter(item => item.json.isHealthy);\nconst unhealthyServices = allResults.filter(item => !item.json.isHealthy);\n\nconst totalServices = allResults.length;\nconst healthyCount = healthyServices.length;\nconst unhealthyCount = unhealthyServices.length;\nconst healthPercentage = totalServices > 0 ? (healthyCount / totalServices * 100).toFixed(1) : 100;\n\n// 전체 시스템 상태 판단\nlet systemStatus = 'healthy';\nif (unhealthyCount > 0) {\n  systemStatus = unhealthyCount === totalServices ? 'critical' : 'degraded';\n}\n\n// 가동률 계산\nconst uptime = staticData.monitoring.uptime;\nconst uptimePercentage = uptime.totalChecks > 0 ? \n  (uptime.successfulChecks / uptime.totalChecks * 100).toFixed(2) : 100;\n\n// 종합 리포트\nconst healthReport = {\n  timestamp: checkTime,\n  systemStatus: systemStatus,\n  summary: {\n    totalServices: totalServices,\n    healthyServices: healthyCount,\n    unhealthyServices: unhealthyCount,\n    healthPercentage: healthPercentage\n  },\n  uptime: {\n    percentage: uptimePercentage,\n    totalChecks: uptime.totalChecks,\n    successfulChecks: uptime.successfulChecks,\n    startTime: uptime.startTime\n  },\n  services: allResults.map(item => ({\n    name: item.json.serviceName,\n    status: item.json.status,\n    responseTime: item.json.responseTime\n  })),\n  recentAlerts: staticData.monitoring.alerts.slice(-5) // 최근 5개 알림\n};\n\nconsole.log(`시스템 헬스체크 완료: ${systemStatus} (${healthPercentage}% 정상)`);\n\nreturn [{ json: healthReport }];"
+      },
+      "id": "generate-health-report",
+      "name": "Generate Health Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-degraded",
+              "leftValue": "={{ $json.systemStatus }}",
+              "rightValue": "healthy",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-system-status",
+      "name": "System Issues?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "📊 시스템 상태 리포트\\n\\n🔹 전체 상태: {{ $json.systemStatus === 'healthy' ? '✅ 정상' : $json.systemStatus === 'degraded' ? '⚠️ 성능 저하' : '🔴 심각' }}\\n🔹 서비스 정상률: {{ $json.summary.healthPercentage }}% ({{ $json.summary.healthyServices }}/{{ $json.summary.totalServices }})\\n🔹 시스템 가동률: {{ $json.uptime.percentage }}%\\n\\n📈 서비스별 상태:\\n{{ $json.services.map(s => `- ${s.name}: ${s.status === 'healthy' ? '✅' : '❌'} ${s.status}`).join('\\n') }}\\n\\n⏰ 체크 시간: {{ $json.timestamp }}",
+        "otherOptions": {}
+      },
+      "id": "send-system-alert",
+      "name": "Send System Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "cronExpression": "0 21 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-report-trigger",
+      "name": "Daily Report (9PM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        300,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 일일 리포트 생성\nconst staticData = $getWorkflowStaticData('global');\nconst reportTime = new Date().toISOString();\nconst today = new Date().toDateString();\n\n// 오늘의 통계 계산\nconst monitoring = staticData.monitoring || {};\nconst errorStats = staticData.errorStats || {};\n\n// 가동률 정보\nconst uptime = monitoring.uptime || { totalChecks: 0, successfulChecks: 0 };\nconst uptimePercentage = uptime.totalChecks > 0 ? \n  (uptime.successfulChecks / uptime.totalChecks * 100).toFixed(2) : 100;\n\n// 에러 통계\nconst totalErrors = errorStats.totalErrors || 0;\nconst errorsByCategory = errorStats.errorsByCategory || {};\nconst errorsBySeverity = errorStats.errorsBySeverity || {};\n\n// 일일 리포트 데이터 구성\nconst dailyReport = {\n  date: today,\n  reportTime: reportTime,\n  systemHealth: {\n    uptimePercentage: uptimePercentage,\n    totalHealthChecks: uptime.totalChecks,\n    successfulChecks: uptime.successfulChecks,\n    failedChecks: uptime.totalChecks - uptime.successfulChecks\n  },\n  errorSummary: {\n    totalErrors: totalErrors,\n    errorsByCategory: errorsByCategory,\n    errorsBySeverity: errorsBySeverity\n  },\n  alerts: monitoring.alerts || [],\n  recommendations: generateRecommendations(uptimePercentage, totalErrors, errorsBySeverity)\n};\n\nfunction generateRecommendations(uptime, errors, severityBreakdown) {\n  const recommendations = [];\n  \n  if (uptime < 95) {\n    recommendations.push('시스템 가동률이 95% 미만입니다. 인프라 안정성을 점검하세요.');\n  }\n  \n  if (errors > 10) {\n    recommendations.push('일일 에러 발생이 10회를 초과했습니다. 에러 패턴을 분석하세요.');\n  }\n  \n  if (severityBreakdown.critical > 0) {\n    recommendations.push('심각한 에러가 발생했습니다. 즉시 조치가 필요합니다.');\n  }\n  \n  if (recommendations.length === 0) {\n    recommendations.push('시스템이 안정적으로 운영되고 있습니다.');\n  }\n  \n  return recommendations;\n}\n\nconsole.log(`일일 리포트 생성: ${today}`);\n\nreturn [{ json: dailyReport }];"
+      },
+      "id": "generate-daily-report",
+      "name": "Generate Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "{{ $env.SLACK_CHANNEL }}",
+        "text": "📅 일일 시스템 리포트 ({{ $json.date }})\\n\\n🔹 시스템 건강도:\\n- 가동률: {{ $json.systemHealth.uptimePercentage }}%\\n- 헬스체크: {{ $json.systemHealth.successfulChecks }}/{{ $json.systemHealth.totalHealthChecks }}\\n- 실패: {{ $json.systemHealth.failedChecks }}회\\n\\n🔹 에러 현황:\\n- 총 에러: {{ $json.errorSummary.totalErrors }}회\\n{{ Object.entries($json.errorSummary.errorsBySeverity).map(([severity, count]) => `- ${severity}: ${count}회`).join('\\n') }}\\n\\n🔹 주요 카테고리:\\n{{ Object.entries($json.errorSummary.errorsByCategory).map(([category, count]) => `- ${category}: ${count}회`).join('\\n') }}\\n\\n💡 권장사항:\\n{{ $json.recommendations.map(rec => `- ${rec}`).join('\\n') }}\\n\\n⏰ 리포트 시간: {{ $json.reportTime }}",
+        "otherOptions": {}
+      },
+      "id": "send-daily-report",
+      "name": "Send Daily Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        700,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Initialize Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Health Check": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Services": {
+      "main": [
+        [
+          {
+            "node": "Check Service Health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Health Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Service Health": {
+      "main": [
+        [
+          {
+            "node": "Analyze Service Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Service Status": {
+      "main": [
+        [
+          {
+            "node": "Is Unhealthy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Unhealthy?": {
+      "main": [
+        [
+          {
+            "node": "Alert Unhealthy Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Unhealthy Service": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Health Report": {
+      "main": [
+        [
+          {
+            "node": "System Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "System Issues?": {
+      "main": [
+        [
+          {
+            "node": "Send System Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Daily Report (9PM)": {
+      "main": [
+        [
+          {
+            "node": "Generate Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-06-23T21:45:00.000Z",
+  "updatedAt": "2025-06-23T21:45:00.000Z",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {},
+  "active": true
+}

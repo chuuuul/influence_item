@@ -68,8 +68,10 @@ wheels/
 *.egg
 
 # Database files
-*.db
-*.sqlite3
+data/db/*.db
+data/db/*.sqlite3
+data/db/*.db-shm
+data/db/*.db-wal
 influence_item_usage.db
 
 # Backup files
@@ -79,6 +81,8 @@ influence_item_usage.db
 *.tmp
 *.jsonl
 error_log.jsonl
+n8n/logs/*.log
+logs/*.log
 
 # Test outputs
 test_*.py
@@ -95,3 +99,10 @@ screenshots/
 
 # Monitoring data
 monitoring_data/
+
+# Data files
+data/exports/*.csv
+data/uploads/*
+
+# n8n
+.n8n/

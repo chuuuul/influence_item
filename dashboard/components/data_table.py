@@ -447,34 +447,13 @@ class AdvancedDataTable:
 
 
 def create_sample_data_for_table() -> pd.DataFrame:
-    """테이블 테스트용 샘플 데이터 생성"""
-    np.random.seed(42)
-    
-    channels = ["홍지윤 Yoon", "아이유IU", "이사배(RISABAE)", "다영 DAYOUNG", "소이와여니"]
-    categories = ["스킨케어", "메이크업", "헤어케어", "패션", "향수"]
-    statuses = ["대기중", "검토중", "승인됨", "반려됨"]
-    
-    data = []
-    for i in range(120):  # 100개 이상 데이터로 성능 테스트
-        score = min(100, max(20, np.random.normal(75, 15)))
-        upload_date = datetime.now() - timedelta(days=np.random.randint(1, 30))
-        
-        data.append({
-            "id": f"PROD_{i+1:03d}",
-            "매력도_점수": round(score, 1),
-            "채널명": np.random.choice(channels),
-            "영상_제목": f"[일상VLOG] {np.random.choice(categories)} 추천 솔직 후기",
-            "제품명": f"{np.random.choice(['프리미엄', '에센셜', '럭셔리'])} {np.random.choice(categories)} 제품",
-            "카테고리": np.random.choice(categories),
-            "예상_가격": f"{np.random.randint(10000, 100000):,}원",
-            "감성_강도": round(np.random.uniform(0.6, 0.95), 2),
-            "실사용_인증": round(np.random.uniform(0.4, 0.9), 2),
-            "인플루언서_신뢰도": round(np.random.uniform(0.7, 1.0), 2),
-            "상태": np.random.choice(statuses),
-            "업로드_날짜": upload_date.strftime("%Y-%m-%d"),
-        })
-    
-    return pd.DataFrame(data)
+    """테스트용 빈 데이터프레임 반환"""
+    # 컬럼 구조만 정의하고 빈 데이터 반환
+    columns = [
+        "id", "매력도_점수", "채널명", "영상_제목", "제품명", "카테고리", 
+        "예상_가격", "감성_강도", "실사용_인증", "인플루언서_신뢰도", "상태", "업로드_날짜"
+    ]
+    return pd.DataFrame(columns=columns)
 
 
 # 테스트 함수
@@ -482,20 +461,7 @@ def test_advanced_data_table():
     """고급 데이터 테이블 테스트"""
     st.title("🧪 Advanced Data Table Component Test")
     
-    # 샘플 데이터 생성
-    sample_data = create_sample_data_for_table()
-    
-    # 데이터 테이블 컴포넌트 생성
-    data_table = AdvancedDataTable(sample_data, "test_table")
-    
-    # 테이블 렌더링
-    selected_row = data_table.render()
-    
-    # 선택된 행 표시
-    if selected_row is not None:
-        st.markdown("---")
-        st.markdown("### 🎯 선택된 항목")
-        st.json(selected_row.to_dict())
+    st.info("실제 데이터가 필요합니다. 데이터베이스에서 데이터를 가져와서 테스트하세요.")
 
 
 if __name__ == "__main__":

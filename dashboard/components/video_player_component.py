@@ -352,87 +352,16 @@ def _format_time(seconds: float) -> str:
 
 
 def create_sample_segments_data() -> List[Dict[str, Any]]:
-    """테스트용 샘플 구간 데이터 생성"""
-    return [
-        {
-            'start_time': 45.0,
-            'end_time': 78.0,
-            'title': '메이크업 제품 소개',
-            'description': '새로운 파운데이션을 직접 발라보며 커버력과 지속력에 대해 설명',
-            'confidence_score': 0.85,
-            'product_name': '프리미엄 쿠션 파운데이션',
-            'category': '메이크업'
-        },
-        {
-            'start_time': 120.0,
-            'end_time': 165.0,
-            'title': '스킨케어 루틴',
-            'description': '밤 스킨케어 루틴에서 세럼 사용법과 효과 소개',
-            'confidence_score': 0.72,
-            'product_name': '비타민C 세럼',
-            'category': '스킨케어'
-        },
-        {
-            'start_time': 200.0,
-            'end_time': 240.0,
-            'title': '헤어 제품 리뷰',
-            'description': '새로운 헤어 오일을 사용해보며 윤기와 부드러움 테스트',
-            'confidence_score': 0.68,
-            'product_name': '아르간 헤어 오일',
-            'category': '헤어케어'
-        }
-    ]
+    """테스트용 빈 데이터 반환"""
+    return []
 
 
 # 테스트용 페이지 (개발 시에만 사용)
 def render_video_player_test_page():
     """비디오 플레이어 테스트 페이지"""
-    st.title("🎬 비디오 플레이어 테스트")
-    
-    # 테스트 URL 입력
-    test_url = st.text_input(
-        "YouTube URL",
-        value="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        help="테스트할 YouTube URL을 입력하세요"
-    )
-    
-    # 샘플 데이터 사용
-    if st.button("샘플 데이터로 테스트"):
-        sample_data = create_sample_segments_data()
-        render_video_player_component(
-            test_url,
-            sample_data,
-            "테스트 영상 분석 결과"
-        )
-    
-    # 수동 구간 입력
-    st.markdown("### 수동 구간 입력")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        start_time = st.number_input("시작 시간 (초)", min_value=0.0, value=0.0, step=1.0)
-        title = st.text_input("구간 제목", value="테스트 구간")
-    
-    with col2:
-        end_time = st.number_input("종료 시간 (초)", min_value=0.0, value=30.0, step=1.0)
-        product_name = st.text_input("제품명", value="테스트 제품")
-    
-    description = st.text_area("구간 설명", value="테스트용 구간입니다.")
-    confidence = st.slider("신뢰도", 0.0, 1.0, 0.8, 0.01)
-    
-    if st.button("수동 구간으로 테스트"):
-        manual_data = [{
-            'start_time': start_time,
-            'end_time': end_time,
-            'title': title,
-            'description': description,
-            'confidence_score': confidence,
-            'product_name': product_name,
-            'category': '테스트'
-        }]
-        
-        render_video_player_component(
-            test_url,
-            manual_data,
-            "수동 입력 테스트"
-        )
+    st.title("🎬 비디오 플레이어 컴포넌트")
+    st.info("실제 분석 결과 데이터가 필요합니다. 메인 대시보드에서 영상을 분석하여 사용하세요.")
+
+
+if __name__ == "__main__":
+    render_video_player_test_page()

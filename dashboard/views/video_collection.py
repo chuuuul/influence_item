@@ -18,7 +18,7 @@ def render_video_collection():
     else:
         col1, col2 = st.columns(2)
         with col1:
-            channel = st.selectbox("채널 선택", ["홍지윤 Yoon", "아이유IU", "이사배"])
+            channel = st.selectbox("채널 선택", ["등록된 채널 없음"])
         with col2:
             period = st.selectbox("분석 기간", ["최근 1개월", "최근 3개월", "최근 6개월"])
         
@@ -27,11 +27,4 @@ def render_video_collection():
     
     # 수집 현황
     st.subheader("📊 수집 현황")
-    status_data = pd.DataFrame({
-        "채널명": ["홍지윤 Yoon", "아이유IU", "이사배"],
-        "총 영상수": [145, 89, 234],
-        "오늘 수집": [5, 2, 8],
-        "분석 대기": [12, 5, 18]
-    })
-    
-    st.dataframe(status_data, use_container_width=True)
+    st.info("등록된 채널이 없습니다. 먼저 채널을 등록해주세요.")
