@@ -193,14 +193,16 @@ class GoogleSheetsUnifiedClient:
     
     def ensure_headers(self) -> bool:
         """
-        PRD 요구사항에 맞는 헤더 설정
+        N8N 워크플로우 호환 헤더 설정
         
-        채널 관리를 위한 표준 헤더:
-        - 채널명, 채널 ID, 카테고리, 구독자수, 상태, 마지막 업데이트, 설명, 추가일
+        N8N 호환 채널 관리 헤더:
+        - channel_id, channel_name, channel_type, status, celebrity_name, 
+          subscribers, last_updated, description, created_date, url
         """
         headers = [
-            '채널명', '채널 ID', '카테고리', '구독자수', 
-            '상태', '마지막 업데이트', '설명', '추가일'
+            'channel_id', 'channel_name', 'channel_type', 'status', 
+            'celebrity_name', 'subscribers', 'last_updated', 
+            'description', 'created_date', 'url'
         ]
         
         if self.is_read_only():
@@ -217,16 +219,16 @@ class GoogleSheetsUnifiedClient:
             
             if not existing_headers or existing_headers != headers:
                 # 헤더 설정
-                self.worksheet.update('A1:H1', [headers])
+                self.worksheet.update([headers], 'A1:J1')
                 
                 # 헤더 포맷팅
-                self.worksheet.format('A1:H1', {
+                self.worksheet.format('A1:J1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 1.0},
                     'textFormat': {'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}}
                 })
                 
-                self.logger.info("채널 관리 헤더 설정 완료")
+                self.logger.info("N8N 호환 헤더 설정 완료")
             
             return True
             
@@ -240,10 +242,12 @@ class GoogleSheetsUnifiedClient:
         channel_id: str, 
         category: str = '기타',
         subscribers: int = 0, 
-        description: str = ''
+        description: str = '',
+        celebrity_name: str = '',
+        url: str = ''
     ) -> bool:
         """
-        새 채널 추가 (PRD: 신규 채널 탐색 결과 관리)
+        새 채널 추가 (N8N 호환 구조)
         """
         if self.is_read_only():
             self.logger.error("읽기 전용 모드: 채널 추가 불가")
@@ -252,15 +256,21 @@ class GoogleSheetsUnifiedClient:
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         current_date = datetime.now().strftime('%Y-%m-%d')
         
+        # URL이 없으면 채널 ID로 생성
+        if not url:
+            url = f"https://www.youtube.com/channel/{channel_id}"
+        
         new_channel = {
-            '채널명': channel_name,
-            '채널 ID': channel_id,
-            '카테고리': category,
-            '구독자수': subscribers,
-            '상태': '검토중',  # PRD: 운영자 검토 필요
-            '마지막 업데이트': current_time,
-            '설명': description,
-            '추가일': current_date
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'channel_type': category,
+            'status': 'review',  # 영문 상태값 사용
+            'celebrity_name': celebrity_name,
+            'subscribers': subscribers,
+            'last_updated': current_time,
+            'description': description,
+            'created_date': current_date,
+            'url': url
         }
         
         
@@ -271,14 +281,15 @@ class GoogleSheetsUnifiedClient:
             # 중복 확인
             existing_channels = self.get_channels()
             for channel in existing_channels:
-                if channel.get('채널 ID') == channel_id:
+                if channel.get('channel_id') == channel_id:
                     self.logger.warning(f"이미 존재하는 채널 ID: {channel_id}")
                     return False
             
-            # 새 행 추가
+            # 새 행 추가 (N8N 호환 순서)
             new_row = [
-                channel_name, channel_id, category, subscribers,
-                '검토중', current_time, description, current_date
+                channel_id, channel_name, category, 'review',
+                celebrity_name, subscribers, current_time, 
+                description, current_date, url
             ]
             
             self.worksheet.append_row(new_row)
@@ -316,11 +327,11 @@ class GoogleSheetsUnifiedClient:
                     channel_data = dict(zip(headers, padded_row))
                     
                     # 숫자 필드 변환
-                    if '구독자수' in channel_data:
+                    if 'subscribers' in channel_data:
                         try:
-                            channel_data['구독자수'] = int(channel_data['구독자수'] or 0)
+                            channel_data['subscribers'] = int(channel_data['subscribers'] or 0)
                         except ValueError:
-                            channel_data['구독자수'] = 0
+                            channel_data['subscribers'] = 0
                     
                     data.append(channel_data)
             
@@ -333,16 +344,21 @@ class GoogleSheetsUnifiedClient:
     
     def update_channel_status(self, channel_id: str, status: str) -> bool:
         """
-        채널 상태 업데이트 (PRD: 운영자 검토 및 승인)
+        채널 상태 업데이트 (N8N 호환 영문 상태값)
         
         상태 종류:
-        - 검토중: 신규 추가된 채널
-        - 활성: 승인된 채널
-        - 비활성: 일시 중단된 채널
-        - 제외: 제외된 채널
+        - review: 신규 추가된 채널
+        - active: 승인된 채널
+        - inactive: 일시 중단된 채널
         """
         if self.is_read_only():
             self.logger.error("읽기 전용 모드: 상태 업데이트 불가")
+            return False
+        
+        # 유효한 상태값 검증
+        valid_statuses = {'active', 'inactive', 'review'}
+        if status not in valid_statuses:
+            self.logger.error(f"잘못된 상태값: {status}. 유효한 값: {valid_statuses}")
             return False
         
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -358,10 +374,10 @@ class GoogleSheetsUnifiedClient:
                 cell = self.worksheet.find(channel_id)
                 if cell:
                     row = cell.row
-                    # 상태 컬럼 업데이트 (E열)
-                    self.worksheet.update(f'E{row}', [[status]])
-                    # 마지막 업데이트 시간 업데이트 (F열)
-                    self.worksheet.update(f'F{row}', [[current_time]])
+                    # 상태 컬럼 업데이트 (D열, N8N 구조에서는 4번째)
+                    self.worksheet.update([[status]], f'D{row}')
+                    # 마지막 업데이트 시간 업데이트 (G열, N8N 구조에서는 7번째)
+                    self.worksheet.update([[current_time]], f'G{row}')
                     
                     self.logger.info(f"채널 상태 업데이트 완료: {channel_id} -> {status}")
                     return True
@@ -378,14 +394,19 @@ class GoogleSheetsUnifiedClient:
             return False
     
     def get_channels_by_status(self, status: str) -> List[Dict[str, Any]]:
-        """상태별 채널 필터링"""
+        """상태별 채널 필터링 (N8N 호환)"""
         channels = self.get_channels()
-        return [ch for ch in channels if ch.get('상태') == status]
+        return [ch for ch in channels if ch.get('status') == status]
     
     def get_channels_by_category(self, category: str) -> List[Dict[str, Any]]:
-        """카테고리별 채널 필터링"""
+        """카테고리별 채널 필터링 (N8N 호환)"""
         channels = self.get_channels()
-        return [ch for ch in channels if ch.get('카테고리') == category]
+        return [ch for ch in channels if ch.get('channel_type') == category]
+    
+    def get_celebrity_channels(self) -> List[Dict[str, Any]]:
+        """연예인 채널만 필터링"""
+        channels = self.get_channels()
+        return [ch for ch in channels if ch.get('celebrity_name', '').strip()]
     
     def export_to_csv(self, filename: Optional[str] = None) -> Optional[str]:
         """CSV로 내보내기"""
@@ -451,10 +472,10 @@ class GoogleSheetsUnifiedClient:
             if not channels:
                 return True
             
-            # 모든 채널의 마지막 업데이트 시간 갱신
+            # 모든 채널의 마지막 업데이트 시간 갱신 (G열)
             num_rows = len(channels) + 1  # 헤더 포함
             for i in range(2, num_rows + 1):  # 헤더 제외
-                self.worksheet.update(f'F{i}', [[current_time]])
+                self.worksheet.update([[current_time]], f'G{i}')
             
             self.logger.info(f"데이터 동기화 완료: {len(channels)}개 항목")
             return True
@@ -475,27 +496,33 @@ class GoogleSheetsUnifiedClient:
                 'total_subscribers': 0
             }
         
-        # 상태별 통계
+        # 상태별 통계 (N8N 호환)
         status_counts = {}
         for channel in channels:
-            status = channel.get('상태', '미지정')
+            status = channel.get('status', '미지정')
             status_counts[status] = status_counts.get(status, 0) + 1
         
-        # 카테고리별 통계
+        # 카테고리별 통계 (N8N 호환)
         category_counts = {}
         for channel in channels:
-            category = channel.get('카테고리', '미지정')
+            category = channel.get('channel_type', '미지정')
             category_counts[category] = category_counts.get(category, 0) + 1
+        
+        # 연예인 채널 통계
+        celebrity_count = sum(
+            1 for channel in channels if channel.get('celebrity_name', '').strip()
+        )
         
         # 총 구독자수
         total_subscribers = sum(
-            channel.get('구독자수', 0) for channel in channels
+            channel.get('subscribers', 0) for channel in channels
         )
         
         return {
             'total_channels': len(channels),
             'by_status': status_counts,
             'by_category': category_counts,
+            'celebrity_channels': celebrity_count,
             'total_subscribers': total_subscribers,
             'auth_method': self.auth_method.value if self.auth_method else 'none',
             'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
