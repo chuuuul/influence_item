@@ -68,11 +68,11 @@ wheels/
 *.egg
 
 # Database files
-data/db/*.db
-data/db/*.sqlite3
-data/db/*.db-shm
-data/db/*.db-wal
-influence_item_usage.db
+data/*.db
+data/*.sqlite3
+data/*.db-shm
+data/*.db-wal
+influence_item.db
 *.db-shm
 *.db-wal
 
@@ -108,3 +108,69 @@ data/uploads/*
 
 # n8n
 .n8n/
+
+dev-debug.log
+# Dependency directories
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+
+# Task files
+# tasks.json
+# tasks/ 
+
+# Python Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# AI Models and Cache
+models/
+*.model
+.cache/
+.huggingface/
+
+# Video Processing Temporary Files
+data/temp_videos/
+data/temp_audio/
+data/temp_frames/
+temp_analysis/
+
+# Large files
+*.mp4
+*.avi
+*.wav
+*.m4a
+
+# Google Service Account Keys
+config/service-account-key.json
+config/google-sheets-credentials.json
+config/google_service_account.json
+*-service-account.json
+
+# API Response Cache
+.api_cache/
+
+# Analysis Results (large files)
+data/analysis_results/*.json
+data/analysis_results/*.jsonl
+
+# Coupang API Cache
+.coupang_cache/
+
+# Streamlit Cache
+.streamlit/
+
+# OCR/Computer Vision Models Cache
+.easyocr/
+.ultralytics/
+
+# Whisper Model Cache  
+~/.cache/whisper/
